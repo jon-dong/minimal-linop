@@ -22,7 +22,11 @@ class TestAdjointError:
         assert adjoint_error(LinOpMatrix(torch.randn(3, 4, dtype=C64)), torch.randn(4, dtype=C64)) < 1e-5
 
     def test_wrong_adjoint_is_detected(self):
-        assert adjoint_error(WrongAdjoint(), torch.randn(8), torch.randn(8)) > 0.1
+        # With y = A x / 2 the discrepancy is |<x, x>| / (2 |x|^2) = 1/2, whatever
+        # x is; taking y at random would make the error |cos(x, y)| / 2, which is
+        # below any fixed threshold for a fair share of the draws.
+        x = torch.randn(8)
+        assert adjoint_error(WrongAdjoint(), x, x) > 0.1
 
     def test_mixed_real_complex(self):
         assert adjoint_error(LinOpReal(), torch.randn(8, dtype=C64), torch.randn(8)) < 1e-5

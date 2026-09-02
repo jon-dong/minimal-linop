@@ -5,7 +5,7 @@ import torch
 from minimal_linop import (
     LinOp, LinOpIdentity, LinOpMul, LinOpReal, LinOpImag, LinOpSumReduce,
     LinOpMatrix, LinOpFunction, LinOpCat, LinOpFft, LinOpCrop, LinOpRoll,
-    adjoint_error,
+    LinOpGrad, adjoint_error,
 )
 
 torch.manual_seed(0)
@@ -36,6 +36,19 @@ class TestMul:
         A = LinOpMul(torch.randn(4, 4, dtype=C64))
         assert A.apply(torch.randn(3, 4, 4, dtype=C64)).shape == (3, 4, 4)
 
+    def test_broadcasting_coefficients_declare_no_shape(self):
+        """A size-1 axis broadcasts, so c.shape is not the shape acted on."""
+        A = LinOpMul(torch.randn(1, 8))
+        assert A.in_shape is None and A.out_shape is None
+        assert A.apply(torch.randn(4, 8)).shape == (4, 8)
+        B = A @ LinOpCrop((16, 16), (4, 8))          # would have raised on (1, 8)
+        assert B.out_shape == (4, 8)
+        assert adjoint_error(B, torch.randn(16, 16), torch.randn(4, 8)) < 1e-6
+        assert LinOpMul(torch.tensor(2.0)).in_shape is None
+
+    def test_scalar_free_shape_is_declared(self):
+        assert LinOpMul(torch.randn(4, 6)).in_shape == (4, 6)
+
 
 class TestRealImag:
     def test_real(self):
@@ -65,6 +78,16 @@ class TestSumReduce:
     def test_adjoint(self):
         A = LinOpSumReduce(dim=-3, size=4)
         assert adjoint_error(A, torch.randn(3, 4, 5, 6), torch.randn(3, 1, 5, 6)) < 1e-5
+
+    def test_positive_dim_rejected(self):
+        """dim=1 would reduce a batch axis, and the operator would not be
+        batch-transparent."""
+        with pytest.raises(ValueError, match="trailing"):
+            LinOpSumReduce(dim=1, size=3)
+
+    def test_is_not_shape_preserving(self):
+        A = LinOpSumReduce(dim=-3, size=4) @ LinOpCrop((4, 8, 8), (4, 4, 4))
+        assert A.in_shape == (4, 8, 8) and A.out_shape is None
 
 
 class TestMatrix:
@@ -133,6 +156,24 @@ class TestCat:
     def test_mixed_declarations_leave_out_shape_unknown(self):
         A = LinOpCat([LinOpCrop((16, 16), (8, 8)), LinOpFft(dim=(-2, -1))])
         assert A.out_shape is None
+
+    def test_declared_widths_are_not_refreshed_by_apply(self):
+        """With every out_shape declared the split is fixed at construction:
+        apply() leaves no state behind and a wrong width is named."""
+        A = LinOpCat([LinOpCrop((8, 8), (4, 4)), LinOpCrop((8, 8), (4, 2))])
+        assert A.out_shape == (4, 6)
+        A.apply(torch.randn(8, 8))
+        assert A._widths == [4, 2]
+        with pytest.raises(ValueError, match="widths"):
+            A.applyT(torch.randn(4, 7))
+        assert adjoint_error(A, torch.randn(3, 8, 8), torch.randn(3, 4, 6)) < 1e-6
+
+    def test_shape_changing_sub_operators_keep_the_widths_unknown(self):
+        A = LinOpCat([LinOpGrad(2), LinOpGrad(2)])
+        assert A.out_shape is None
+        x = torch.randn(4, 5)
+        assert A.apply(x).shape == (2, 4, 10)
+        assert adjoint_error(A, x, torch.randn(2, 4, 10)) < 1e-6
 
     def test_widths_learned_from_apply(self):
         class KeepFirst(LinOp):          # deliberately no out_shape

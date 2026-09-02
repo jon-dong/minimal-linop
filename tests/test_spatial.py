@@ -35,7 +35,7 @@ class TestRoll:
     def test_tensor_and_float_shifts(self):
         assert LinOpRoll(torch.tensor([1.6, -0.4]), dim=(-2, -1)).shifts == (2, 0)
         assert LinOpRoll(torch.tensor(3)).shifts == (3,)
-        assert LinOpRoll([1, 2.0], dim=(0, 1)).shifts == (1, 2)
+        assert LinOpRoll([1, 2.0], dim=(-2, -1)).shifts == (1, 2)
 
     @pytest.mark.parametrize("pad_zeros", [False, True])
     def test_torch_func_transforms(self, pad_zeros):
@@ -56,6 +56,14 @@ class TestRoll:
     def test_shift_dim_length_mismatch_raises(self):
         with pytest.raises(ValueError):
             LinOpRoll((1, 2), dim=-1)
+
+    @pytest.mark.parametrize("make", [lambda d: LinOpRoll(1, dim=d), lambda d: LinOpFlip(dim=d)])
+    def test_positive_dim_rejected(self, make):
+        """Operators act on trailing axes; a positive dim would eat a batch axis."""
+        with pytest.raises(ValueError, match="trailing"):
+            make(0)
+        with pytest.raises(ValueError, match="trailing"):
+            make((0, 1))
 
 
 class TestCrop:
@@ -150,6 +158,16 @@ class TestFlip:
 
 
 class TestGrad:
+
+    def test_is_not_shape_preserving(self):
+        assert LinOpGrad(2).preserves_shape is False
+        assert LinOpGrad(2).in_shape is None and LinOpGrad(2).out_shape is None
+
+    def test_size_one_axis(self):
+        A = LinOpGrad(2)
+        x = torch.randn(1, 5)
+        assert torch.equal(A.apply(x)[0], torch.zeros(1, 5))     # nothing to difference
+        assert adjoint_error(A, x, torch.randn(2, 1, 5)) < 1e-6
 
     def test_shapes_and_values_2d(self):
         A = LinOpGrad()

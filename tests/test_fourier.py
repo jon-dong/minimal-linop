@@ -39,6 +39,12 @@ class TestFft:
         with pytest.raises(ValueError, match="norm"):
             LinOpFft(norm="orthogonal")
 
+    def test_positive_dim_rejected(self):
+        with pytest.raises(ValueError, match="trailing"):
+            LinOpFft(dim=0)
+        with pytest.raises(ValueError, match="trailing"):
+            LinOpFftShift(dim=(0, 1))
+
 
 class TestIfft:
 

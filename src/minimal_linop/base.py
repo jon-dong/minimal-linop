@@ -20,8 +20,10 @@ class LinOp(ABC):
 
     ``in_shape`` and ``out_shape`` describe those trailing axes.  ``None``
     means shape-agnostic (an FFT works on any length) and is compatible with
-    everything in the shape checks; a shape-agnostic operator is assumed to
-    preserve shape when a composition infers its own shapes.
+    everything in the shape checks.  A composition fills a missing shape from
+    the operator next to it, which assumes the shape-agnostic one preserves
+    shape; an operator that does not (``LinOpGrad``) sets the class attribute
+    ``preserves_shape = False`` and the composition leaves the shape unknown.
 
     Algebra -- every expression returns a new ``LinOp``::
 
@@ -29,11 +31,12 @@ class LinOp(ABC):
         A @ x      A.apply(x) when x is a tensor; so is A(x)
         A + B      sum                    A - B      difference
         c * A      scaling by a scalar (adjoint scales by conj(c));  -A
-        A.H        adjoint: A.H.apply == A.applyT.  A.T is an alias.
+        A.H        adjoint: A.H.apply == A.applyT.  A.H.H is A itself.
     """
 
     in_shape = None
     out_shape = None
+    preserves_shape = True      # False if shape-agnostic but shape-changing
 
     @abstractmethod
     def apply(self, x):
@@ -75,6 +78,8 @@ class LinOp(ABC):
     def __mul__(self, other):
         if isinstance(other, LinOp):
             raise TypeError("use @ to compose operators; * is for scalars")
+        if isinstance(other, torch.Tensor) and other.numel() != 1:
+            raise TypeError("* is for scalars; use LinOpMul for element-wise coefficients")
         return LinOpScalarMul(self, other)
 
     __rmul__ = __mul__
@@ -83,8 +88,6 @@ class LinOp(ABC):
     def H(self):
         """The adjoint operator."""
         return LinOpAdjoint(self)
-
-    T = H
 
     def __repr__(self):
         return f"{type(self).__name__}(in_shape={self.in_shape}, out_shape={self.out_shape})"
@@ -101,8 +104,11 @@ class LinOpComposition(LinOp):
     def __init__(self, A: LinOp, B: LinOp):
         _check_same(B.out_shape, A.in_shape, "shapes in A @ B (B.out_shape vs A.in_shape)")
         self.A, self.B = A, B
-        self.in_shape = B.in_shape if B.in_shape is not None else A.in_shape
-        self.out_shape = A.out_shape if A.out_shape is not None else B.out_shape
+        self.in_shape = B.in_shape if B.in_shape is not None else (
+            A.in_shape if B.preserves_shape else None)
+        self.out_shape = A.out_shape if A.out_shape is not None else (
+            B.out_shape if A.preserves_shape else None)
+        self.preserves_shape = A.preserves_shape and B.preserves_shape
 
     def apply(self, x):
         return self.A.apply(self.B.apply(x))
@@ -120,6 +126,7 @@ class LinOpSum(LinOp):
         self.A, self.B = A, B
         self.in_shape = A.in_shape if A.in_shape is not None else B.in_shape
         self.out_shape = A.out_shape if A.out_shape is not None else B.out_shape
+        self.preserves_shape = A.preserves_shape and B.preserves_shape
 
     def apply(self, x):
         return self.A.apply(x) + self.B.apply(x)
@@ -134,6 +141,7 @@ class LinOpScalarMul(LinOp):
     def __init__(self, A: LinOp, scalar):
         self.A, self.scalar = A, scalar
         self.in_shape, self.out_shape = A.in_shape, A.out_shape
+        self.preserves_shape = A.preserves_shape
 
     def apply(self, x):
         return self.A.apply(x) * self.scalar
@@ -150,6 +158,7 @@ class LinOpAdjoint(LinOp):
     def __init__(self, A: LinOp):
         self.A = A
         self.in_shape, self.out_shape = A.out_shape, A.in_shape
+        self.preserves_shape = A.preserves_shape
 
     def apply(self, y):
         return self.A.applyT(y)
@@ -160,5 +169,3 @@ class LinOpAdjoint(LinOp):
     @property
     def H(self):
         return self.A
-
-    T = H

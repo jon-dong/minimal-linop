@@ -18,7 +18,7 @@ Requires Python ≥ 3.10 and PyTorch ≥ 2.0.
 
 ```python
 import torch
-from minimal_linop import LinOpFft, LinOpMul, LinOpCrop, adjoint_error
+from minimal_linop import LinOpFft, LinOpMul, LinOpCrop, adjoint_error, operator_norm
 
 # A coherent imaging model: crop a window from the object, multiply by a
 # probe, take the 2-D FFT.  Every operator acts on the last two axes.
@@ -36,6 +36,9 @@ grad = A.H @ (A @ x - b)
 
 # Check any operator with the dot-product test (should be ~1e-6 in single precision).
 print(adjoint_error(A, x_true))
+
+# The spectral norm, e.g. for a gradient step 1 / ‖A‖²: power iteration on AᴴA.
+print(operator_norm(A, x_true))
 ```
 
 ## Algebra
@@ -45,13 +48,16 @@ Every expression below returns a new operator; nothing is materialised.
 | Expression | Meaning |
 |---|---|
 | `A.apply(x)`, `A(x)`, `A @ x` | forward action `A x` |
-| `A.applyT(y)`, `A.H @ y` | adjoint action `Aᴴ y` (`A.T` is an alias of `A.H`) |
+| `A.applyT(y)`, `A.H @ y` | adjoint action `Aᴴ y` |
 | `A @ B` | composition, `(A @ B)(x) = A(B(x))` |
 | `A + B`, `A - B`, `-A` | sum and difference |
 | `c * A` | scaling by a scalar; the adjoint scales by `conj(c)` |
+| `sum([A, B, C])` | the sum of a list (`0 + A` returns `A`) |
 | `A.H.H` | `A` itself |
 
-`Aᴴ` is the Hermitian adjoint for the inner product `⟨u, v⟩ = Σ conj(u) v`; for real operators that is the transpose. Shapes: `in_shape` / `out_shape` describe the trailing axes an operator acts on; `None` means shape-agnostic (an FFT accepts any length) and is compatible with everything. Sums and compositions check declared shapes at construction.
+`Aᴴ` is the Hermitian adjoint for the inner product `⟨u, v⟩ = Σ conj(u) v`. For a real operator that is the transpose; for a complex one it is not, which is why there is no `.T` alias.
+
+Shapes: `in_shape` / `out_shape` describe the trailing axes an operator acts on; `None` means shape-agnostic (an FFT accepts any length) and is compatible with everything. Sums and compositions check declared shapes at construction. A composition fills a shape the shape-agnostic side leaves undeclared from the other side, which assumes that side preserves shape; an operator that does not says so with `preserves_shape = False` (`LinOpGrad`, `LinOpSumReduce`, a `LinOpCat` of several operators) and the composition leaves the shape unknown rather than guessing it wrong.
 
 ## Catalogue
 
@@ -69,7 +75,7 @@ Every expression below returns a new operator; nothing is materialised.
 | `LinOpZoomFft(in_shape, out_shape, k_start, k_end, ...)` | zoomed FFT on a band (needs `minimal-fft`) | `zoom_ifft` |
 | `LinOpRoll(shifts, dim, pad_zeros)` | circular shift, optionally zeroing the wrap | shift back |
 | `LinOpCrop(in_shape, out_shape, fourier_origin)` | central crop (or around the Fourier origin) | zero-pad |
-| `LinOpPatch(in_shape, out_shape, shifts, ...)` | shifted window, `Crop @ Roll` in O(patch) | scatter-add |
+| `LinOpPatch(in_shape, out_shape, shifts, ...)` | shifted window, `Crop @ Roll` gathering only the window | scatter-add into zeros |
 | `LinOpFlip(dim)` | reverse axes | itself |
 | `LinOpGrad(ndim)` | forward differences, `(..., *s) → (..., ndim, *s)` | negative divergence |
 | `LinOpDownsample(in_shape, factor)` | keep every `factor`-th sample | zero-interleave |
@@ -98,18 +104,21 @@ C = Conv1d(torch.randn(64, dtype=torch.complex64))
 assert adjoint_error(C, torch.randn(64, dtype=torch.complex64)) < 1e-5
 ```
 
-Or wrap two functions: `LinOpFunction(apply, applyT, in_shape, out_shape)`. Declare `in_shape` / `out_shape` when they are fixed so compositions can check them. The names `H` and `T` are taken by the adjoint property, so do not use them for attributes.
+Or wrap two functions: `LinOpFunction(apply, applyT, in_shape, out_shape)`. Declare `in_shape` / `out_shape` when they are fixed so compositions can check them, and set `preserves_shape = False` if the operator leaves them undeclared but changes the shape. The name `H` is taken by the adjoint property, so do not use it for an attribute.
 
 ## Checking operators
 
-- `adjoint_error(A, x, y=None)` returns `|Re⟨A x, y⟩ − Re⟨x, Aᴴ y⟩| / (‖A x‖ ‖y‖)`. Every operator in this library is tested this way.
+- `adjoint_error(A, x, y=None)` returns `|Re⟨A x, y⟩ − Re⟨x, Aᴴ y⟩| / (‖A x‖ ‖y‖)`, with the denominator falling back to `‖x‖ ‖Aᴴ y‖` when `A x` or `y` vanishes. Every operator in this library is tested this way.
+- `operator_norm(A, x0, n_iter=50)` estimates `‖A‖₂` by power iteration on `AᴴA`; `x0` fixes the shape, dtype and device. The estimate approaches `‖A‖₂` from below, so a step size `1/‖A‖²` taken from it deserves a margin.
 - `to_matrix(A, in_shape=None, dtype=torch.complex64)` materialises the dense matrix for small problems (`to_matrix(A.H) == to_matrix(A).conj().T`).
 
 ## Conventions worth knowing
 
+- Every `dim` is negative. Operators act on the trailing axes, so an axis counted from the front — which would consume a batch axis — is rejected at construction.
 - `norm="ortho"` is the default for the FFT operators, so `Aᴴ = A⁻¹` for them. With `"backward"` or `"forward"` the adjoint is still exact, but it is the opposite transform with the *other* norm, not the inverse.
 - `LinOpCrop` centres like `torch`: it keeps indices `in//2 - out//2` onward. `fourier_origin=True` keeps the low frequencies of a DC-in-the-corner spectrum.
-- `LinOpRoll` shifts given as tensors are rounded to ints with `int()`, so operators can be built inside `torch.func` transforms.
+- `LinOpMul` declares `in_shape = out_shape = c.shape`, unless `c` is a scalar or has a size-1 axis: it then broadcasts, the shape it acts on is not determined by `c`, and it declares none.
+- `LinOpRoll` shifts given as tensors are rounded to the nearest integer (ties to even) and read with `int()`, so operators can be built inside `torch.func` transforms.
 - `LinOpCat` splits its adjoint input according to the sub-operators' `out_shape`; if none is declared, call `apply` once first.
 
 ## Relation to other libraries

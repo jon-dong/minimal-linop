@@ -23,3 +23,20 @@ def test_readme_python_blocks_run():
         torch.manual_seed(0)
         for i, block in enumerate(blocks):
             exec(compile(block, f"README.md block {i}", "exec"), namespace)
+
+
+def test_catalogue_table_matches_the_public_operators():
+    """Every operator in the README's catalogue is exported, and every
+    exported operator but the base class and the algebra combinators is in
+    the catalogue."""
+    import minimal_linop
+
+    text = README.read_text()
+    table = text.split("## Catalogue", 1)[1].split("\n## ", 1)[0]
+    documented = set()
+    for line in table.splitlines():
+        if line.startswith("| `"):
+            documented |= set(re.findall(r"`(LinOp\w+)", line.split("|")[1]))
+    combinators = {"LinOp", "LinOpComposition", "LinOpSum", "LinOpScalarMul", "LinOpAdjoint"}
+    exported = {n for n in minimal_linop.__all__ if n.startswith("LinOp")} - combinators
+    assert documented == exported

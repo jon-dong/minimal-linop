@@ -3,7 +3,7 @@ dense matrices, function wrappers and concatenation."""
 
 import torch
 
-from ._utils import as_shape, complex_dtype
+from ._utils import as_dims, as_shape, complex_dtype
 from .base import LinOp
 
 __all__ = [
@@ -25,11 +25,18 @@ class LinOpIdentity(LinOp):
 class LinOpMul(LinOp):
     """Element-wise multiplication by fixed coefficients, ``A x = c * x``
     (a diagonal operator).  ``c`` may broadcast against ``x``; the adjoint
-    multiplies by ``conj(c)``."""
+    multiplies by ``conj(c)``.
+
+    The declared shape is ``c.shape``, except when ``c`` is a scalar or has a
+    size-1 axis: it then broadcasts, the shape it acts on is not determined by
+    ``c``, and the operator declares none rather than a wrong one.
+    """
 
     def __init__(self, coefficients: torch.Tensor):
         self.coefficients = coefficients
-        self.in_shape = self.out_shape = tuple(coefficients.shape)
+        shape = tuple(coefficients.shape)
+        if shape and 1 not in shape:
+            self.in_shape = self.out_shape = shape
 
     def apply(self, x):
         return self.coefficients * x
@@ -68,8 +75,13 @@ class LinOpSumReduce(LinOp):
     ``(..., 1, H, W)``, e.g. to add up N incoherent intensity images.
     """
 
+    preserves_shape = False
+
     def __init__(self, dim: int, size: int):
-        self.dim, self.size = dim, size
+        dims = as_dims(dim)                      # one trailing (negative) axis
+        if len(dims) != 1:
+            raise ValueError("LinOpSumReduce reduces exactly one axis")
+        self.dim, self.size = dims[0], int(size)
 
     def apply(self, x):
         return x.sum(dim=self.dim, keepdim=True)
@@ -92,7 +104,7 @@ class LinOpMatrix(LinOp):
         return torch.einsum("ij,...j->...i", self.matrix, x)
 
     def applyT(self, y):
-        return torch.einsum("ij,...j->...i", self.matrix.conj().T, y)
+        return torch.einsum("ij,...i->...j", self.matrix.conj(), y)
 
 
 class LinOpFunction(LinOp):
@@ -126,9 +138,10 @@ class LinOpCat(LinOp):
 
     where ``y_k`` is the slice of ``y`` matching the width of ``A_k x``.  The
     per-operator widths come from the sub-operators' ``out_shape`` (or their
-    common ``in_shape`` when none declares one and they are shape-preserving),
-    and are refreshed by every ``apply``.  The sub-operators must agree on
-    every output axis except the last.
+    common ``in_shape`` when none declares one and all are shape-preserving).
+    When neither is available they are learned from the last ``apply``, the
+    only state this class keeps.  The sub-operators must agree on every output
+    axis except the last.
     """
 
     def __init__(self, ops):
@@ -148,16 +161,20 @@ class LinOpCat(LinOp):
                 )
             self._widths = [o[-1] for o in outs]
             self.out_shape = next(iter(leads)) + (sum(self._widths),)
-        elif all(o is None for o in outs) and self.in_shape is not None:
+        elif (all(o is None for o in outs) and self.in_shape is not None
+              and all(op.preserves_shape for op in self.ops)):
             self._widths = [self.in_shape[-1]] * len(self.ops)
             self.out_shape = self.in_shape[:-1] + (sum(self._widths),)
         else:
             self._widths = None
             self.out_shape = None
+        self._declared = self._widths is not None
+        self.preserves_shape = len(self.ops) == 1 and self.ops[0].preserves_shape
 
     def apply(self, x):
         outs = [op.apply(x) for op in self.ops]
-        self._widths = [o.shape[-1] for o in outs]
+        if not self._declared:
+            self._widths = [o.shape[-1] for o in outs]      # remembered for applyT
         return torch.cat(outs, dim=-1)
 
     def applyT(self, y):
@@ -165,6 +182,11 @@ class LinOpCat(LinOp):
             raise RuntimeError(
                 "LinOpCat cannot split its adjoint input: no sub-operator declares "
                 "out_shape and apply() has not been called yet"
+            )
+        if sum(self._widths) != y.shape[-1]:
+            raise ValueError(
+                f"LinOpCat splits its adjoint input into widths {self._widths} "
+                f"(total {sum(self._widths)}), but got {y.shape[-1]} columns"
             )
         chunks = torch.split(y, self._widths, dim=-1)
         return sum(op.applyT(c) for op, c in zip(self.ops, chunks))

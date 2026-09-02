@@ -26,7 +26,7 @@ from .spatial import (
     LinOpDownsample,
     LinOpUpsample,
 )
-from .testing import adjoint_error, to_matrix
+from .testing import adjoint_error, operator_norm, to_matrix
 
 __version__ = "0.1.0"
 
@@ -42,5 +42,5 @@ __all__ = [
     "LinOpRoll", "LinOpCrop", "LinOpPatch", "LinOpFlip", "LinOpGrad",
     "LinOpDownsample", "LinOpUpsample",
     # helpers
-    "adjoint_error", "to_matrix",
+    "adjoint_error", "operator_norm", "to_matrix",
 ]

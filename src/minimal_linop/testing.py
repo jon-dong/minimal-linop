@@ -1,4 +1,5 @@
-"""Helpers to check operators: the dot-product test and dense materialisation."""
+"""Helpers to check operators: the dot-product test, the spectral norm and
+dense materialisation."""
 
 import math
 
@@ -6,7 +7,7 @@ import torch
 
 from ._utils import as_shape
 
-__all__ = ["adjoint_error", "to_matrix"]
+__all__ = ["adjoint_error", "operator_norm", "to_matrix"]
 
 
 def adjoint_error(op, x, y=None):
@@ -18,6 +19,10 @@ def adjoint_error(op, x, y=None):
     inner product is used so that mixed real/complex operators such as
     ``LinOpReal`` are covered as well.  ``y`` defaults to a random tensor
     shaped like ``A x``.
+
+    If ``A x`` or ``y`` vanishes the denominator falls back to ``|x| |A^H y|``,
+    which bounds the same discrepancy; if both do, the test is vacuous and the
+    result is 0.
     """
     Ax = op.apply(x)
     if y is None:
@@ -25,8 +30,38 @@ def adjoint_error(op, x, y=None):
     ATy = op.applyT(y)
     lhs = (Ax.conj() * y).sum().real
     rhs = (x.conj() * ATy).sum().real
-    scale = Ax.norm() * y.norm()
-    return float(abs(lhs - rhs) / max(float(scale), torch.finfo(Ax.real.dtype).tiny))
+    scale = float(Ax.norm()) * float(y.norm())
+    if scale == 0.0:
+        scale = float(x.norm()) * float(ATy.norm())
+    if scale == 0.0:
+        return 0.0
+    return float(abs(lhs - rhs)) / scale
+
+
+def operator_norm(op, x0, n_iter=50):
+    """Estimate the spectral norm ``||A||_2`` by power iteration on ``A^H A``.
+
+    ``x0`` fixes the shape, dtype and device of the iterate; ``n_iter``
+    products ``A^H A x`` are formed and the largest singular value is the
+    square root of the limiting Rayleigh quotient.  The estimate approaches
+    ``||A||_2`` **from below** (it is exact only in the limit, and slower the
+    closer the two largest singular values are), so a gradient step ``1 /
+    ||A||^2`` derived from it should keep a small margin.  Returns 0.0 for the
+    zero operator.
+    """
+    if n_iter < 1:
+        raise ValueError("n_iter must be at least 1")
+    scale = float(x0.norm())
+    if scale == 0.0:
+        raise ValueError("x0 must be non-zero")
+    x, value = x0 / scale, 0.0
+    for _ in range(int(n_iter)):
+        x = op.applyT(op.apply(x))
+        value = float(x.norm())
+        if value == 0.0:
+            return 0.0
+        x = x / value
+    return math.sqrt(value)
 
 
 def to_matrix(op, in_shape=None, dtype=torch.complex64, device=None):
@@ -34,7 +69,10 @@ def to_matrix(op, in_shape=None, dtype=torch.complex64, device=None):
     ``i``-th basis vector of ``in_shape`` (default ``op.in_shape``), flattened
     in row-major order.  Uses one batched call, so ``op`` must be
     batch-transparent.  For inspection, debugging and small problems."""
-    shape = as_shape(op.in_shape if in_shape is None else in_shape)
+    shape = op.in_shape if in_shape is None else in_shape
+    if shape is None:
+        raise ValueError(f"{type(op).__name__} declares no in_shape; pass in_shape=...")
+    shape = as_shape(shape)
     n = math.prod(shape)
     basis = torch.eye(n, dtype=dtype, device=device).reshape(n, *shape)
     return op.apply(basis).reshape(n, -1).T

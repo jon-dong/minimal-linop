@@ -4,7 +4,8 @@ import torch
 
 from minimal_linop import (
     LinOp, LinOpComposition, LinOpSum, LinOpScalarMul, LinOpAdjoint,
-    LinOpMatrix, LinOpFft, LinOpIdentity, adjoint_error,
+    LinOpMatrix, LinOpFft, LinOpIdentity, LinOpGrad, LinOpCrop, LinOpMul,
+    adjoint_error,
 )
 
 torch.manual_seed(0)
@@ -59,6 +60,17 @@ class TestComposition:
         B = LinOpFft() @ cmat(4, 4)
         assert B.in_shape == (4,) and B.out_shape == (4,)
 
+    def test_shape_changing_agnostic_operator_leaves_the_shape_unknown(self):
+        """LinOpGrad is shape-agnostic but adds a channel axis, so a
+        composition must not claim the other operator's shape."""
+        A = LinOpGrad(2) @ LinOpCrop((8, 8), (4, 4))
+        assert A.in_shape == (4 * 2, 4 * 2) and A.out_shape is None
+        assert not A.preserves_shape
+        assert A.apply(torch.randn(8, 8)).shape == (2, 4, 4)
+        B = LinOpMul(torch.randn(2, 4, 4)) @ A        # would have raised on (4, 4)
+        assert B.in_shape == (8, 8) and B.out_shape == (2, 4, 4)
+        assert adjoint_error(B, torch.randn(8, 8), torch.randn(2, 4, 4)) < 1e-6
+
     def test_incompatible_shapes_raise(self):
         with pytest.raises(ValueError, match="A @ B"):
             cmat(2, 3) @ cmat(5, 4)
@@ -80,10 +92,13 @@ class TestAdjoint:
         assert torch.equal(A.H.applyT(x), A.apply(x))
         assert A.H.in_shape == (2,) and A.H.out_shape == (3,)
 
-    def test_T_is_an_alias(self):
+    def test_no_T_alias(self):
+        """`.T` would read as a transpose, which is not the adjoint of a
+        complex operator; only `.H` exists."""
         A = cmat(2, 3)
-        assert isinstance(A.T, LinOpAdjoint)
-        assert isinstance(LinOp.T, property)
+        for op in (A, A.H, A @ A.H, 2.0 * A):
+            with pytest.raises(AttributeError):
+                op.T
 
     def test_double_adjoint_is_the_operator(self):
         A = cmat(2, 3)
@@ -168,3 +183,7 @@ class TestErrors:
     def test_linop_times_linop_raises(self):
         with pytest.raises(TypeError, match="@"):
             LinOpIdentity() * LinOpIdentity()
+
+    def test_non_scalar_tensor_times_linop_raises(self):
+        with pytest.raises(TypeError, match="LinOpMul"):
+            LinOpIdentity() * torch.ones(4)

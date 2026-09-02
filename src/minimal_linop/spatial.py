@@ -101,10 +101,12 @@ class LinOpPatch(LinOp):
 
     Equal to ``LinOpCrop(in_shape, out_shape, fourier_origin) @
     LinOpRoll(shifts, pad_zeros=pad_zeros)`` on the last ``len(in_shape)``
-    axes, but gathers only the window samples, so both directions cost
-    O(patch) instead of O(signal).  This is the operator for ptychography-like
-    models where a small probe scans a large object.  Both directions are
-    out-of-place and work under ``torch.func``.
+    axes, but touches only the window samples: ``apply`` is O(patch) whatever
+    the signal size, and ``applyT`` scatters O(patch) values into the
+    O(signal) zero tensor it has to return, instead of rolling the whole
+    signal twice.  This is the operator for ptychography-like models where a
+    small probe scans a large object.  Both directions are out-of-place and
+    work under ``torch.func``.
     """
 
     def __init__(self, in_shape, out_shape, shifts=None, pad_zeros=False, fourier_origin=False):
@@ -196,10 +198,16 @@ class LinOpGrad(LinOp):
     holding the difference along spatial axis ``k``.
     ``applyT``: the negative divergence, exact adjoint of the above.
     Used for total-variation regularisation.
+
+    Shape-agnostic but *not* shape-preserving (it adds the channel axis), so
+    ``preserves_shape`` is False and a composition with it leaves the shape it
+    cannot know undeclared rather than guessing.
     """
 
+    preserves_shape = False
+
     def __init__(self, ndim=2):
-        self.ndim = ndim
+        self.ndim = int(ndim)
 
     def apply(self, x):
         grads = []

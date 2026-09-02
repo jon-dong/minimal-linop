@@ -34,7 +34,7 @@ b = A @ x_true                                              # measurements, shap
 x = torch.zeros_like(x_true)
 grad = A.H @ (A @ x - b)
 
-# Check any operator with the dot-product test (should be ~1e-6 in single precision).
+# Check any operator with the dot-product test (round-off: < 1e-5 in single precision).
 print(adjoint_error(A, x_true))
 
 # The spectral norm, e.g. for a gradient step 1 / ‖A‖²: power iteration on AᴴA.
@@ -125,11 +125,19 @@ Or wrap two functions: `LinOpFunction(apply, applyT, in_shape, out_shape)`. Decl
 
 The same idea as `scipy.sparse.linalg.LinearOperator`, [PyLops](https://pylops.readthedocs.io), [GlobalBioIm](https://biomedical-imaging-group.github.io/GlobalBioIm/) and the `physics` classes of [deepinv](https://deepinv.github.io), reduced to what you need to write and verify forward models in PyTorch, and small enough to read in one sitting. Extracted from the `ciel` computational-imaging library.
 
+## Tutorials
+
+Three notebooks in [`notebooks/`](notebooks/), runnable after `pip install -e ".[notebooks]"`:
+
+1. [Why linear operators](notebooks/01_why_linear_operators.ipynb): reconstruction is `min ½‖Ax − b‖²`, its gradient is `Aᴴ(Ax − b)`; a coherent forward model built by composition, and what a sloppy adjoint does to the solver.
+2. [What it computes](notebooks/02_what_it_computes.ipynb): every identity of the algebra, every adjoint of the catalogue and every convention, checked against brute force in float64.
+3. [Benchmark](notebooks/03_benchmark.ipynb): the overhead against hand-written torch, `LinOpPatch` against `LinOpCrop @ LinOpRoll`, batching, `to_matrix`, precision, and when not to use it.
+
 ## Tests
 
 ```bash
 pip install -e ".[test]" && pip install minimal-fft   # or pip install -e ../minimal-fft
-pytest
+pytest                     # add ".[notebooks]" to run the tutorials as tests too
 ```
 
 ## License

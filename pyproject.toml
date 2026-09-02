@@ -22,6 +22,7 @@ dependencies = ["torch>=2.0"]
 [project.optional-dependencies]
 fft = ["minimal-fft"]
 test = ["pytest"]
+notebooks = ["numpy", "scipy", "matplotlib", "jupyter"]
 
 [project.urls]
 Repository = "https://github.com/jon-dong/minimal-linop"

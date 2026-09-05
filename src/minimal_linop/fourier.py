@@ -71,11 +71,11 @@ class LinOpFftShift(LinOp):
 
 class LinOpZoomFft(LinOp):
     """Zoomed FFT over the band ``[k_start, k_end]`` (radians per sample),
-    acting on the last ``len(in_shape)`` axes.  Needs the ``minimal-fft``
+    acting on the last ``len(in_shape)`` axes.  Needs the ``minimal-zoom-fft``
     package (``pip install minimal-linop[fft]``).
 
-    ``apply`` is ``minimal_fft.zoom_fft`` and ``applyT`` is
-    ``minimal_fft.zoom_ifft`` with the conjugate norm, which is the exact
+    ``apply`` is ``minimal_zoom_fft.zoom_fft`` and ``applyT`` is
+    ``minimal_zoom_fft.zoom_ifft`` with the conjugate norm, which is the exact
     adjoint on any band.  With the defaults this is ``LinOpFft`` with
     ``dim=(-len(in_shape), ..., -1)``.
 
@@ -86,18 +86,18 @@ class LinOpZoomFft(LinOp):
     out_shape : int or tuple of int, optional
         Number of band samples per axis.  Default: ``in_shape``.
     k_start, k_end, norm, center, include_end
-        As in ``minimal_fft.zoom_fft`` (scalar or one value per axis).
+        As in ``minimal_zoom_fft.zoom_fft`` (scalar or one value per axis).
     """
 
     def __init__(self, in_shape, out_shape=None, k_start=0.0, k_end=2 * math.pi,
                  norm="ortho", center=False, include_end=False):
         try:
-            import minimal_fft
+            import minimal_zoom_fft
         except ImportError as e:
             raise ImportError(
-                "LinOpZoomFft needs the minimal-fft package: pip install minimal-fft"
+                "LinOpZoomFft needs the minimal-zoom-fft package: pip install minimal-zoom-fft"
             ) from e
-        self._fft = minimal_fft
+        self._fft = minimal_zoom_fft
         self.in_shape = as_shape(in_shape)
         self.out_shape = self.in_shape if out_shape is None else as_shape(out_shape)
         if len(self.out_shape) != len(self.in_shape):

@@ -19,8 +19,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install CPU-only torch (avoids the CUDA wheels)
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - name: Install minimal-fft (not yet on PyPI) for the zoomed-FFT operator
-        run: pip install git+https://github.com/jon-dong/minimal-fft
+      - name: Install minimal-zoom-fft (not yet on PyPI) for the zoomed-FFT operator
+        run: pip install git+https://github.com/jon-dong/minimal-zoom-fft
       - name: Install the library with its test extra
         run: pip install -e ".[test]"
       - run: pytest

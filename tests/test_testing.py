@@ -158,7 +158,7 @@ def _catalogue():
         ("LinOpUpsample", LinOpUpsample((5, 8), 3), z(3, 5, 8), z(3, 15, 24)),
     ]
     try:                                              # optional [fft] extra
-        import minimal_fft                            # noqa: F401
+        import minimal_zoom_fft                            # noqa: F401
         from minimal_linop import LinOpZoomFft
         items.append(("LinOpZoomFft", LinOpZoomFft((5, 8), (4, 6), k_start=-0.4, k_end=0.9),
                       z(3, 5, 8), z(3, 4, 6)))
@@ -208,4 +208,4 @@ def test_every_public_operator_is_exported():
 def test_the_catalogue_test_covers_every_exported_operator():
     covered = {name for name, *_ in CATALOGUE}
     exported = {n for n in minimal_linop.__all__ if n.startswith("LinOp") and n != "LinOp"}
-    assert exported - covered <= {"LinOpZoomFft"}      # skipped without minimal-fft
+    assert exported - covered <= {"LinOpZoomFft"}      # skipped without minimal-zoom-fft

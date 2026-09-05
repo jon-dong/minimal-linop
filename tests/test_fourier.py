@@ -76,7 +76,7 @@ class TestFftShift:
 
 
 class TestZoomFft:
-    minimal_fft = pytest.importorskip("minimal_fft")
+    minimal_zoom_fft = pytest.importorskip("minimal_zoom_fft")
 
     def test_defaults_are_the_fft(self):
         A, F = LinOpZoomFft((8, 8)), LinOpFft(dim=(-2, -1))

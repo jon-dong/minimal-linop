@@ -9,7 +9,7 @@ Most of computational imaging is `y = A x` for a linear `A` that is far too larg
 ```bash
 pip install minimal-linop                                     # once published
 pip install git+https://github.com/jon-dong/minimal-linop     # from GitHub
-pip install "minimal-linop[fft]"                              # adds minimal-fft for LinOpZoomFft
+pip install "minimal-linop[fft]"                              # adds minimal-zoom-fft for LinOpZoomFft
 ```
 
 Requires Python ≥ 3.10 and PyTorch ≥ 2.0.
@@ -79,7 +79,7 @@ Formulas are written along one axis, `n` indexing the output and `N` the axis le
 | `LinOpCat([A_k])` | `cat([A_k x], dim=-1)` | `Σₖ A_kᴴ yₖ`, `yₖ` the columns of `A_k x` |
 | `LinOpFft(dim, norm)`, `LinOpIfft` | `fftn` / `ifftn` (`norm="ortho"` by default, unitary) | the opposite transform with the conjugate norm |
 | `LinOpFftShift(dim)` | `fftshift` | `ifftshift` |
-| `LinOpZoomFft(in_shape, out_shape, k_start, k_end, ...)` | `zoom_fft` on a band (needs `minimal-fft`) | `zoom_ifft` with the conjugate norm |
+| `LinOpZoomFft(in_shape, out_shape, k_start, k_end, ...)` | `zoom_fft` on a band (needs `minimal-zoom-fft`) | `zoom_ifft` with the conjugate norm |
 | `LinOpRoll(shifts, dim, pad_zeros)` | `x[n − s]`, circular; with `pad_zeros`, `0` where `n − s` falls outside `[0, N)` | `y[n + s]`, same rule |
 | `LinOpConv(h)` | `Σₘ h[m] x[n − m]`, circular, on the last `h.ndim` axes | `Σₘ conj(h[m]) y[n + m]` (correlation) |
 | `LinOpCrop(in_shape, out_shape, fourier_origin)` | `x[c + n]`, `n < out`, `c = in//2 − out//2`; with `fourier_origin`, the first `⌈out/2⌉` and the last `⌊out/2⌋` samples | zero-pad: `y` back where it was taken from, `0` elsewhere |
@@ -146,7 +146,7 @@ Three notebooks in [`notebooks/`](notebooks/), runnable after `pip install -e ".
 ## Tests
 
 ```bash
-pip install -e ".[test]" && pip install minimal-fft   # or pip install -e ../minimal-fft
+pip install -e ".[test]" && pip install minimal-zoom-fft   # or pip install -e ../minimal-zoom-fft
 pytest                     # add ".[notebooks]" to run the tutorials as tests too
 ```
 
@@ -159,7 +159,7 @@ MIT
 ## Manifest
 
 - Purpose: linear operators with exact adjoints, and the algebra to compose them, in PyTorch.
-- Dependencies: `torch`. Optional: `minimal-fft` for `LinOpZoomFft`.
+- Dependencies: `torch`. Optional: `minimal-zoom-fft` for `LinOpZoomFft`.
 - Size: about 1000 lines of implementation in 7 modules, 20 operators and 3 helpers; about 1000 lines of tests; 3 tutorial notebooks.
 - Origin: the `ciel` computational-imaging library, EPFL.
 - Provenance: written with Claude (Anthropic) from a brief; read and checked in full by Jonathan Dong.

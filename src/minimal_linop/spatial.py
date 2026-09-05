@@ -1,8 +1,6 @@
-"""Spatial operators: shifts, crops, patches, flips, finite differences and
-integer-factor resampling.  All are N-D: they act on ``dim`` or on the last
-``len(in_shape)`` axes."""
-
-import math
+"""Spatial operators: shifts, convolutions, crops, patches, flips, finite
+differences and integer-factor resampling.  All are N-D: they act on ``dim``
+or on the last ``len(in_shape)`` axes."""
 
 import torch
 
@@ -10,8 +8,8 @@ from ._utils import as_dims, as_ints, as_shape, pad_axis
 from .base import LinOp
 
 __all__ = [
-    "LinOpRoll", "LinOpCrop", "LinOpPatch", "LinOpFlip", "LinOpGrad",
-    "LinOpDownsample", "LinOpUpsample",
+    "LinOpRoll", "LinOpConv", "LinOpCrop", "patch_by_crop_and_roll", "LinOpPatch",
+    "LinOpFlip", "LinOpGrad", "LinOpDownsample", "LinOpUpsample",
 ]
 
 
@@ -48,6 +46,37 @@ class LinOpRoll(LinOp):
 
     def applyT(self, y):
         return self._roll(y, tuple(-s for s in self.shifts))
+
+
+class LinOpConv(LinOp):
+    """Circular convolution with a fixed kernel ``h`` on the last ``h.ndim``
+    axes, ``(A x)[n] = sum_m h[m] x[n - m]`` with indices taken modulo the
+    axis lengths, computed as ``ifftn(fftn(x) * fftn(h))``.  The adjoint is
+    the circular correlation with ``h``: convolution with ``conj(h[-m])``,
+    whose transfer function is ``conj(fftn(h))``.
+
+    The origin of the kernel is index 0, as for ``torch.roll`` and the FFT: a
+    delta at index 0 is the identity and a delta at index 1 is ``LinOpRoll(1)``.
+    A point-spread function stored with its centre in the middle of the array
+    goes through ``torch.fft.ifftshift`` first.  The input's trailing shape
+    must be ``h.shape``; the output is real when both ``x`` and ``h`` are.
+    """
+
+    def __init__(self, kernel: torch.Tensor):
+        self.kernel = kernel
+        self.in_shape = self.out_shape = tuple(kernel.shape)
+        self.dim = tuple(range(-kernel.ndim, 0))
+        self.transfer = torch.fft.fftn(kernel, dim=self.dim)
+
+    def _filter(self, x, transfer):
+        y = torch.fft.ifftn(torch.fft.fftn(x, dim=self.dim) * transfer, dim=self.dim)
+        return y if x.is_complex() or self.kernel.is_complex() else y.real
+
+    def apply(self, x):
+        return self._filter(x, self.transfer)
+
+    def applyT(self, y):
+        return self._filter(y, self.transfer.conj())
 
 
 class LinOpCrop(LinOp):
@@ -96,13 +125,27 @@ def _with(shape, dim, size):
     return shape
 
 
+def patch_by_crop_and_roll(in_shape, out_shape, shifts=None, pad_zeros=False, fourier_origin=False):
+    """The shifted window as a composition: ``LinOpCrop @ LinOpRoll``.
+
+    This is the *definition* of ``LinOpPatch`` and the readable version of
+    it: roll the signal by ``shifts`` (zeroing what wrapped when
+    ``pad_zeros``), then crop the centre (or the Fourier origin) to
+    ``out_shape``.  It costs a full copy of the signal per application;
+    ``LinOpPatch`` computes the same numbers touching only the window.
+    """
+    in_shape, out_shape = as_shape(in_shape), as_shape(out_shape)
+    dim = tuple(range(-len(in_shape), 0))
+    shifts = (0,) * len(in_shape) if shifts is None else shifts
+    return LinOpCrop(in_shape, out_shape, fourier_origin) @ LinOpRoll(shifts, dim, pad_zeros)
+
+
 class LinOpPatch(LinOp):
     """Extract a shifted ``out_shape`` window from an ``in_shape`` signal.
 
-    Equal to ``LinOpCrop(in_shape, out_shape, fourier_origin) @
-    LinOpRoll(shifts, pad_zeros=pad_zeros)`` on the last ``len(in_shape)``
-    axes, but touches only the window samples: ``apply`` is O(patch) whatever
-    the signal size, and ``applyT`` scatters O(patch) values into the
+    Equal to ``patch_by_crop_and_roll`` with the same arguments, but touches
+    only the window samples: ``apply`` gathers them, so it is O(patch)
+    whatever the signal size, and ``applyT`` scatter-adds them into the
     O(signal) zero tensor it has to return, instead of rolling the whole
     signal twice.  This is the operator for ptychography-like models where a
     small probe scans a large object.  Both directions are out-of-place and
@@ -121,60 +164,56 @@ class LinOpPatch(LinOp):
             raise ValueError("shifts must have one entry per axis of in_shape")
         self.pad_zeros, self.fourier_origin = pad_zeros, fourier_origin
 
-        # Per-axis source indices: the samples the crop keeps, walked back
-        # through the roll (rolled[i] = x[i - s]).
+        # Per axis, the source index of each window sample: the indices the
+        # crop keeps, walked back through the roll (rolled[i] = x[i - s]).
+        # With pad_zeros a source outside the signal is masked out instead
+        # of wrapping around.
         idxs, masks = [], []
         for n, o, s in zip(self.in_shape, self.out_shape, self.shifts):
             if fourier_origin:
                 lo = (o + 1) // 2
-                base = torch.cat([torch.arange(lo), torch.arange(n - (o - lo), n)])
+                kept = torch.cat([torch.arange(lo), torch.arange(n - (o - lo), n)])
             else:
                 start = n // 2 - o // 2
-                base = torch.arange(start, start + o)
-            raw = base - s
-            if pad_zeros:
-                masks.append((raw >= 0) & (raw < n))
-                idxs.append(raw.clamp(0, n - 1))
-            else:
-                masks.append(torch.ones(o, dtype=torch.bool))
-                idxs.append(torch.remainder(raw, n))
-        self._axis_idxs, self._axis_masks = idxs, masks
-        self._cache = {}
+                kept = torch.arange(start, start + o)
+            source = kept - s
+            masks.append((source >= 0) & (source < n))
+            idxs.append(source.clamp(0, n - 1) if pad_zeros else torch.remainder(source, n))
+        # Open grid: axis k's indices are shaped (o_k, 1, ..., 1) so that the
+        # tuple broadcasts to out_shape in x[..., i0, i1, ...].
+        self._idxs = tuple(t.reshape((-1,) + (1,) * (self.ndim - 1 - k)) for k, t in enumerate(idxs))
+        self._mask = None
+        if pad_zeros:
+            mask = torch.ones(self.out_shape, dtype=torch.bool)
+            for k, m in enumerate(masks):
+                mask = mask & m.reshape((-1,) + (1,) * (self.ndim - 1 - k))
+            self._mask = mask
+        self._on_device = {}
 
-    def _tensors(self, device):
-        """Per-device open-grid gather indices, validity mask and flat scatter index."""
-        if device not in self._cache:
-            def open_grid(t, k):
-                return t.reshape((-1,) + (1,) * (self.ndim - 1 - k))
-
-            idxs = [open_grid(t.to(device), k) for k, t in enumerate(self._axis_idxs)]
-            mask = None
-            if self.pad_zeros:
-                mask = idxs[0].new_ones((), dtype=torch.bool)
-                for k, m in enumerate(self._axis_masks):
-                    mask = mask & open_grid(m.to(device), k)
-                mask = mask.expand(self.out_shape)
-            flat, stride = idxs[-1].new_zeros(self.out_shape), 1
-            for k in range(self.ndim - 1, -1, -1):
-                flat = flat + idxs[k] * stride
-                stride *= self.in_shape[k]
-            self._cache[device] = (tuple(idxs), mask, flat.reshape(-1))
-        return self._cache[device]
+    def _tables(self, device):
+        """The gather indices and the mask, moved to ``device`` once."""
+        if device not in self._on_device:
+            self._on_device[device] = (
+                tuple(i.to(device) for i in self._idxs),
+                None if self._mask is None else self._mask.to(device))
+        return self._on_device[device]
 
     def apply(self, x):
-        idxs, mask, _ = self._tensors(x.device)
+        idxs, mask = self._tables(x.device)
         y = x[(...,) + idxs]
         return y if mask is None else torch.where(mask, y, y.new_zeros(()))
 
     def applyT(self, y):
-        _, mask, flat = self._tensors(y.device)
+        idxs, mask = self._tables(y.device)
         if mask is not None:
             y = torch.where(mask, y, y.new_zeros(()))
-        batch = y.shape[:-self.ndim]
-        vals = y.reshape(batch + (-1,))
-        index = flat.view((1,) * len(batch) + (-1,)).expand(vals.shape)
-        z = y.new_zeros(batch + (math.prod(self.in_shape),)).scatter_add(-1, index, vals)
-        return z.reshape(batch + self.in_shape)
+        # index_put addresses leading axes, so the window axes go first and
+        # the batch axes last, and back again afterwards.
+        batch = y.ndim - self.ndim
+        y = y.permute(*range(batch, y.ndim), *range(batch))
+        z = y.new_zeros(self.in_shape + y.shape[self.ndim:])
+        z = z.index_put(idxs, y, accumulate=True)
+        return z.permute(*range(self.ndim, z.ndim), *range(self.ndim))
 
 
 class LinOpFlip(LinOp):

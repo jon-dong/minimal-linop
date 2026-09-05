@@ -8,7 +8,7 @@ import minimal_linop
 from minimal_linop import (
     LinOp, LinOpIdentity, LinOpMul, LinOpReal, LinOpImag, LinOpSumReduce,
     LinOpMatrix, LinOpFunction, LinOpCat, LinOpFft, LinOpIfft, LinOpFftShift,
-    LinOpRoll, LinOpCrop, LinOpPatch, LinOpFlip, LinOpGrad, LinOpDownsample,
+    LinOpRoll, LinOpConv, LinOpCrop, LinOpPatch, LinOpFlip, LinOpGrad, LinOpDownsample,
     LinOpUpsample, adjoint_error, operator_norm, to_matrix,
 )
 
@@ -66,6 +66,7 @@ class TestOperatorNorm:
         ("matrix", LinOpMatrix(torch.randn(6, 5, dtype=C64)), (5,), C64),
         ("fft", LinOpFft(), (8,), C64),
         ("crop", LinOpCrop((8, 8), (4, 4)), (8, 8), C64),
+        ("conv", LinOpConv(torch.randn(4, 6, dtype=C64)), (4, 6), C64),
         ("grad", LinOpGrad(2), (4, 4), torch.float64),
         ("upsample", LinOpUpsample((3, 4), 2), (3, 4), torch.float64),
         ("composition", LinOpFft(dim=(-2, -1)) @ LinOpMul(torch.randn(4, 4, dtype=C128))
@@ -148,6 +149,7 @@ def _catalogue():
         ("LinOpIfft", LinOpIfft(norm="forward"), z(3, 8), z(3, 8)),
         ("LinOpFftShift", LinOpFftShift(dim=(-2, -1)), z(3, 5, 8), z(3, 5, 8)),
         ("LinOpRoll", LinOpRoll((2, -3), dim=(-2, -1), pad_zeros=True), z(3, 5, 8), z(3, 5, 8)),
+        ("LinOpConv", LinOpConv(z(5, 8)), z(3, 5, 8), z(3, 5, 8)),
         ("LinOpCrop", LinOpCrop((5, 8), (3, 4), fourier_origin=True), z(3, 5, 8), z(3, 3, 4)),
         ("LinOpPatch", LinOpPatch((5, 8), (3, 4), shifts=(2, -3)), z(3, 5, 8), z(3, 3, 4)),
         ("LinOpFlip", LinOpFlip(dim=(-2, -1)), z(3, 5, 8), z(3, 5, 8)),

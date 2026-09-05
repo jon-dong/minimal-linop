@@ -157,36 +157,34 @@ class TestCat:
         A = LinOpCat([LinOpCrop((16, 16), (8, 8)), LinOpFft(dim=(-2, -1))])
         assert A.out_shape is None
 
-    def test_declared_widths_are_not_refreshed_by_apply(self):
-        """With every out_shape declared the split is fixed at construction:
-        apply() leaves no state behind and a wrong width is named."""
+    def test_declared_widths_fix_the_split(self):
         A = LinOpCat([LinOpCrop((8, 8), (4, 4)), LinOpCrop((8, 8), (4, 2))])
         assert A.out_shape == (4, 6)
-        A.apply(torch.randn(8, 8))
-        assert A._widths == [4, 2]
-        with pytest.raises(ValueError, match="widths"):
+        with pytest.raises(ValueError, match="split"):
             A.applyT(torch.randn(4, 7))
         assert adjoint_error(A, torch.randn(3, 8, 8), torch.randn(3, 4, 6)) < 1e-6
 
-    def test_shape_changing_sub_operators_keep_the_widths_unknown(self):
-        A = LinOpCat([LinOpGrad(2), LinOpGrad(2)])
-        assert A.out_shape is None
-        x = torch.randn(4, 5)
-        assert A.apply(x).shape == (2, 4, 10)
-        assert adjoint_error(A, x, torch.randn(2, 4, 10)) < 1e-6
+    def test_undeclared_shape_preserving_sub_operators_share_the_rest(self):
+        """Crop declares 4 columns, the two FFTs declare nothing and preserve
+        shape, so they get (12 - 4) / 2 = 4 columns each."""
+        A = LinOpCat([LinOpCrop(4, 4), LinOpFft(), LinOpFft()])
+        x = torch.randn(3, 4, dtype=C64)
+        assert A.out_shape is None and A.apply(x).shape == (3, 12)
+        assert adjoint_error(A, x, torch.randn(3, 12, dtype=C64)) < 1e-5
+        with pytest.raises(ValueError, match="split"):
+            A.applyT(torch.randn(3, 11, dtype=C64))
 
-    def test_widths_learned_from_apply(self):
-        class KeepFirst(LinOp):          # deliberately no out_shape
-            def __init__(self, k):
-                self.k = k
-            def apply(self, x):
-                return x[..., :self.k]
-            def applyT(self, y):
-                return torch.nn.functional.pad(y, (0, 8 - y.shape[-1]))
-        A = LinOpCat([KeepFirst(2), KeepFirst(6)])
-        with pytest.raises(RuntimeError, match="apply"):
-            A.applyT(torch.randn(8))
-        x = torch.randn(8)
-        y = A.apply(x)
-        assert y.shape == (8,)
-        assert adjoint_error(A, x, torch.randn(8)) < 1e-6
+    def test_undeclared_shape_changing_sub_operator_raises(self):
+        """LinOpGrad declares no out_shape and changes the shape: the adjoint
+        input cannot be split, and apply() leaves no state behind that would
+        allow it."""
+        A = LinOpCat([LinOpGrad(2), LinOpGrad(2)])
+        x = torch.randn(4, 5)
+        assert A.out_shape is None and A.apply(x).shape == (2, 4, 10)
+        with pytest.raises(ValueError, match="does not preserve shape"):
+            A.applyT(torch.randn(2, 4, 10))
+        # Declaring the widths through LinOpFunction fixes it.
+        G = LinOpGrad(2)
+        A = LinOpCat([LinOpFunction(G.apply, G.applyT, in_shape=(4, 5), out_shape=(2, 4, 5))] * 2)
+        assert A.out_shape == (2, 4, 10)
+        assert adjoint_error(A, x, torch.randn(2, 4, 10)) < 1e-6

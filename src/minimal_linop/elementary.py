@@ -137,11 +137,10 @@ class LinOpCat(LinOp):
         applyT(y) = sum_k A_k^H y_k
 
     where ``y_k`` is the slice of ``y`` matching the width of ``A_k x``.  The
-    per-operator widths come from the sub-operators' ``out_shape`` (or their
-    common ``in_shape`` when none declares one and all are shape-preserving).
-    When neither is available they are learned from the last ``apply``, the
-    only state this class keeps.  The sub-operators must agree on every output
-    axis except the last.
+    widths come from the sub-operators' ``out_shape``; a sub-operator that
+    declares none must preserve shape, and the width left over by the
+    declared ones is shared equally among those.  The sub-operators must
+    agree on every output axis except the last.
     """
 
     def __init__(self, ops):
@@ -159,34 +158,36 @@ class LinOpCat(LinOp):
                     "sub-operators must agree on every output axis except the last "
                     f"(the concatenation axis); got {sorted(leads)}"
                 )
-            self._widths = [o[-1] for o in outs]
-            self.out_shape = next(iter(leads)) + (sum(self._widths),)
+            self.out_shape = next(iter(leads)) + (sum(o[-1] for o in outs),)
         elif (all(o is None for o in outs) and self.in_shape is not None
               and all(op.preserves_shape for op in self.ops)):
-            self._widths = [self.in_shape[-1]] * len(self.ops)
-            self.out_shape = self.in_shape[:-1] + (sum(self._widths),)
+            self.out_shape = self.in_shape[:-1] + (len(self.ops) * self.in_shape[-1],)
         else:
-            self._widths = None
             self.out_shape = None
-        self._declared = self._widths is not None
         self.preserves_shape = len(self.ops) == 1 and self.ops[0].preserves_shape
 
+    def _widths(self, y):
+        """How the last axis of ``y`` splits among the sub-operators."""
+        widths = [None if op.out_shape is None else op.out_shape[-1] for op in self.ops]
+        free = [k for k, w in enumerate(widths) if w is None]
+        if not all(self.ops[k].preserves_shape for k in free):
+            raise ValueError(
+                "LinOpCat cannot split its adjoint input: a sub-operator declares no "
+                "out_shape and does not preserve shape; declare it, e.g. with "
+                "LinOpFunction(apply, applyT, out_shape=...)"
+            )
+        left = y.shape[-1] - sum(w for w in widths if w is not None)
+        share, rem = divmod(left, len(free)) if free else (0, left)
+        if rem or left < 0:
+            raise ValueError(
+                f"LinOpCat cannot split {y.shape[-1]} columns into widths {widths} "
+                f"(None: an equal share of what is left)"
+            )
+        return [share if w is None else w for w in widths]
+
     def apply(self, x):
-        outs = [op.apply(x) for op in self.ops]
-        if not self._declared:
-            self._widths = [o.shape[-1] for o in outs]      # remembered for applyT
-        return torch.cat(outs, dim=-1)
+        return torch.cat([op.apply(x) for op in self.ops], dim=-1)
 
     def applyT(self, y):
-        if self._widths is None:
-            raise RuntimeError(
-                "LinOpCat cannot split its adjoint input: no sub-operator declares "
-                "out_shape and apply() has not been called yet"
-            )
-        if sum(self._widths) != y.shape[-1]:
-            raise ValueError(
-                f"LinOpCat splits its adjoint input into widths {self._widths} "
-                f"(total {sum(self._widths)}), but got {y.shape[-1]} columns"
-            )
-        chunks = torch.split(y, self._widths, dim=-1)
+        chunks = torch.split(y, self._widths(y), dim=-1)
         return sum(op.applyT(c) for op, c in zip(self.ops, chunks))

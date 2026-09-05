@@ -1,10 +1,10 @@
-"""Roll, Crop, Patch, Flip, Grad, Downsample, Upsample."""
+"""Roll, Conv, Crop, Patch, Flip, Grad, Downsample, Upsample."""
 import pytest
 import torch
 
 from minimal_linop import (
-    LinOpRoll, LinOpCrop, LinOpPatch, LinOpFlip, LinOpGrad,
-    LinOpDownsample, LinOpUpsample, adjoint_error,
+    LinOpRoll, LinOpConv, LinOpCrop, patch_by_crop_and_roll, LinOpPatch, LinOpFlip,
+    LinOpGrad, LinOpDownsample, LinOpUpsample, adjoint_error, to_matrix,
 )
 
 torch.manual_seed(0)
@@ -66,6 +66,66 @@ class TestRoll:
             make((0, 1))
 
 
+def circular_convolution_2d(h, x):
+    """Brute force: y[i, j] = sum_{k, l} h[k, l] x[(i - k) % m, (j - l) % n]."""
+    m, n = h.shape
+    y = torch.zeros_like(x)
+    for i in range(m):
+        for j in range(n):
+            for k in range(m):
+                for l in range(n):
+                    y[i, j] += h[k, l] * x[(i - k) % m, (j - l) % n]
+    return y
+
+
+class TestConv:
+
+    def test_against_brute_force_2d(self):
+        h, x = torch.randn(5, 7, dtype=torch.complex128), torch.randn(5, 7, dtype=torch.complex128)
+        assert torch.allclose(LinOpConv(h).apply(x), circular_convolution_2d(h, x), atol=1e-12)
+
+    def test_delta_kernels_are_rolls(self):
+        x = torch.randn(3, 6, 8)
+        for shift in [(0, 0), (0, 1), (2, 0), (5, 7)]:
+            h = torch.zeros(6, 8)
+            h[shift] = 1.0
+            ref = LinOpRoll(shift, dim=(-2, -1)).apply(x)
+            assert torch.allclose(LinOpConv(h).apply(x), ref, atol=1e-6), shift
+
+    def test_adjoint_is_the_correlation(self):
+        """A^H is convolution with conj(h[-m]), i.e. the flipped conjugate
+        kernel with index 0 kept in place."""
+        h = torch.randn(6, 8, dtype=C64)
+        h_adj = torch.roll(torch.flip(h, dims=(-2, -1)), shifts=(1, 1), dims=(-2, -1)).conj()
+        y = torch.randn(2, 6, 8, dtype=C64)
+        assert torch.allclose(LinOpConv(h).applyT(y), LinOpConv(h_adj).apply(y), atol=1e-5)
+        assert adjoint_error(LinOpConv(h), torch.randn(2, 6, 8, dtype=C64), y) < 1e-5
+
+    def test_real_in_real_out(self):
+        h, x = torch.randn(4, 5), torch.randn(3, 4, 5)
+        A = LinOpConv(h)
+        assert A.apply(x).dtype == torch.float32 and A.applyT(x).dtype == torch.float32
+        assert A.apply(x.to(C64)).dtype == C64
+        assert LinOpConv(h.to(C64)).apply(x).dtype == C64
+        assert adjoint_error(A, x, torch.randn(3, 4, 5)) < 1e-6
+
+    def test_shapes_and_matrix_is_circulant(self):
+        h = torch.randn(6)
+        A = LinOpConv(h)
+        assert A.in_shape == A.out_shape == (6,)
+        M = to_matrix(A, dtype=torch.float32)
+        assert torch.allclose(M[:, 0], h, atol=1e-6)
+        assert torch.allclose(M[:, 1], torch.roll(h, 1), atol=1e-6)
+
+    def test_vmap_and_autograd(self):
+        h = torch.randn(4, 5, dtype=C64)
+        x = torch.randn(3, 4, 5, dtype=C64)
+        A = LinOpConv(h)
+        assert torch.allclose(torch.func.vmap(A.apply)(x), A.apply(x), atol=1e-6)
+        x64 = torch.randn(4, 5, dtype=torch.complex128, requires_grad=True)
+        assert torch.autograd.gradcheck(LinOpConv(h.to(torch.complex128)).apply, (x64,))
+
+
 class TestCrop:
 
     def test_values(self):
@@ -104,7 +164,17 @@ class TestCrop:
 
 
 class TestPatch:
-    """LinOpPatch must equal LinOpCrop @ LinOpRoll, only faster."""
+    """LinOpPatch must equal patch_by_crop_and_roll, only faster."""
+
+    @pytest.mark.parametrize("pad_zeros", [False, True])
+    @pytest.mark.parametrize("fourier_origin", [False, True])
+    def test_equals_its_definition(self, pad_zeros, fourier_origin):
+        kw = dict(shifts=(2, -3), pad_zeros=pad_zeros, fourier_origin=fourier_origin)
+        A, ref = LinOpPatch((9, 12), (4, 6), **kw), patch_by_crop_and_roll((9, 12), (4, 6), **kw)
+        x, y = torch.randn(3, 9, 12, dtype=C64), torch.randn(3, 4, 6, dtype=C64)
+        assert torch.equal(A.apply(x), ref.apply(x))
+        assert torch.equal(A.applyT(y), ref.applyT(y))
+        assert ref.in_shape == (9, 12) and ref.out_shape == (4, 6)
 
     @pytest.mark.parametrize("pad_zeros", [False, True])
     def test_equals_crop_roll_1d_all_shifts(self, pad_zeros):

@@ -2,7 +2,7 @@
 
 Linear operators with exact adjoints in PyTorch, composable with `@`, `+`, `*` and `.H`. One dependency, batch-transparent, device-agnostic.
 
-Most of computational imaging is `y = A x` for a linear `A` that is far too large to store: FFTs, masks, crops, shifts, their compositions. Reconstruction needs `A` and its adjoint `Aᴴ` (that is where every gradient comes from), and it needs them to be *exactly* adjoint or solvers drift. This library gives you a small catalogue of such operators, each with a tested adjoint, and the algebra to combine them into forward models.
+Most of computational imaging is `y = A x` for a linear `A` that is far too large to store: FFTs, masks, crops, shifts, convolutions, their compositions. Reconstruction needs `A` and its adjoint `Aᴴ` (that is where every gradient comes from), and it needs them to be *exactly* adjoint or solvers drift. This library gives you a small catalogue of such operators, each with a tested adjoint, and the algebra to combine them into forward models.
 
 ## Install
 
@@ -18,7 +18,7 @@ Requires Python ≥ 3.10 and PyTorch ≥ 2.0.
 
 ```python
 import torch
-from minimal_linop import LinOpFft, LinOpMul, LinOpCrop, adjoint_error, operator_norm
+from minimal_linop import LinOpFft, LinOpMul, LinOpCrop, LinOpConv, adjoint_error, operator_norm
 
 # A coherent imaging model: crop a window from the object, multiply by a
 # probe, take the 2-D FFT.  Every operator acts on the last two axes.
@@ -39,6 +39,11 @@ print(adjoint_error(A, x_true))
 
 # The spectral norm, e.g. for a gradient step 1 / ‖A‖²: power iteration on AᴴA.
 print(operator_norm(A, x_true))
+
+# An incoherent model: blur by a point-spread function stored with its
+# centre in the middle of the array, hence the ifftshift.
+psf = torch.rand(256, 256)
+blur = LinOpConv(torch.fft.ifftshift(psf / psf.sum()))
 ```
 
 ## Algebra
@@ -61,25 +66,28 @@ Shapes: `in_shape` / `out_shape` describe the trailing axes an operator acts on;
 
 ## Catalogue
 
-| Operator | `apply` | Adjoint |
+Formulas are written along one axis, `n` indexing the output and `N` the axis length; N-D operators apply them on every axis they act on. Indices are taken modulo `N` where the formula says *circular*.
+
+| Operator | `A x` | `Aᴴ y` |
 |---|---|---|
-| `LinOpIdentity()` | `x` | `x` |
-| `LinOpMul(c)` | `c * x` (diagonal; `c` may broadcast) | `conj(c) * y` |
-| `LinOpReal()`, `LinOpImag()` | `Re x`, `Im x` (complex → real) | embed as real / imaginary part |
-| `LinOpSumReduce(dim, size)` | sum along one axis | broadcast back |
+| `LinOpIdentity()` | `x` | `y` |
+| `LinOpMul(c)` | `c ⊙ x` (diagonal; `c` may broadcast) | `conj(c) ⊙ y` |
+| `LinOpReal()`, `LinOpImag()` | `Re x`, `Im x` (complex → real) | `y + 0i`, `i y` |
+| `LinOpSumReduce(dim, size)` | `Σₙ x[n]` over one axis, kept with length 1 | `y` broadcast back to `size` |
 | `LinOpMatrix(M)` | `M x` on the last axis | `Mᴴ y` |
-| `LinOpFunction(f, fT)` | wrap two callables | |
-| `LinOpCat([A_k])` | `cat([A_k x], dim=-1)` | `Σ A_kᴴ y_k` |
+| `LinOpFunction(f, fT)` | `f(x)` | `fT(y)` |
+| `LinOpCat([A_k])` | `cat([A_k x], dim=-1)` | `Σₖ A_kᴴ yₖ`, `yₖ` the columns of `A_k x` |
 | `LinOpFft(dim, norm)`, `LinOpIfft` | `fftn` / `ifftn` (`norm="ortho"` by default, unitary) | the opposite transform with the conjugate norm |
 | `LinOpFftShift(dim)` | `fftshift` | `ifftshift` |
-| `LinOpZoomFft(in_shape, out_shape, k_start, k_end, ...)` | zoomed FFT on a band (needs `minimal-fft`) | `zoom_ifft` |
-| `LinOpRoll(shifts, dim, pad_zeros)` | circular shift, optionally zeroing the wrap | shift back |
-| `LinOpCrop(in_shape, out_shape, fourier_origin)` | central crop (or around the Fourier origin) | zero-pad |
-| `LinOpPatch(in_shape, out_shape, shifts, ...)` | shifted window, `Crop @ Roll` gathering only the window | scatter-add into zeros |
-| `LinOpFlip(dim)` | reverse axes | itself |
-| `LinOpGrad(ndim)` | forward differences, `(..., *s) → (..., ndim, *s)` | negative divergence |
-| `LinOpDownsample(in_shape, factor)` | keep every `factor`-th sample | zero-interleave |
-| `LinOpUpsample(in_shape, factor)` | nearest-neighbour replication | block sum |
+| `LinOpZoomFft(in_shape, out_shape, k_start, k_end, ...)` | `zoom_fft` on a band (needs `minimal-fft`) | `zoom_ifft` with the conjugate norm |
+| `LinOpRoll(shifts, dim, pad_zeros)` | `x[n − s]`, circular; with `pad_zeros`, `0` where `n − s` falls outside `[0, N)` | `y[n + s]`, same rule |
+| `LinOpConv(h)` | `Σₘ h[m] x[n − m]`, circular, on the last `h.ndim` axes | `Σₘ conj(h[m]) y[n + m]` (correlation) |
+| `LinOpCrop(in_shape, out_shape, fourier_origin)` | `x[c + n]`, `n < out`, `c = in//2 − out//2`; with `fourier_origin`, the first `⌈out/2⌉` and the last `⌊out/2⌋` samples | zero-pad: `y` back where it was taken from, `0` elsewhere |
+| `LinOpPatch(in_shape, out_shape, shifts, pad_zeros, fourier_origin)` | `Crop(Roll(x))`, defined by `patch_by_crop_and_roll`, gathering only the window | scatter-add of `y` into zeros |
+| `LinOpFlip(dim)` | `x[N − 1 − n]` | itself |
+| `LinOpGrad(ndim)` | `(∇x)ₖ[n] = x[n + eₖ] − x[n]`, `0` at the last index; `(..., *s) → (..., ndim, *s)` | `Σₖ (yₖ[n − eₖ] − yₖ[n])` with `yₖ = 0` at the last index and outside the grid (negative divergence) |
+| `LinOpDownsample(in_shape, factor)` | `x[f n]` | `y[n / f]` where `f` divides `n`, `0` elsewhere |
+| `LinOpUpsample(in_shape, factor)` | `x[⌊n / f⌋]` | `Σⱼ y[f n + j]`, `j < f`, the sum of each block |
 
 All operators act on trailing axes (`dim` defaults to the last axis; use `dim=(-2, -1)` or a 2-tuple `in_shape` for images), leave leading batch axes alone, work on CPU/CUDA/MPS, support autograd, and are out-of-place so they run under `torch.func.vmap` / `jacrev`.
 
@@ -91,17 +99,15 @@ Subclass `LinOp` and implement the two methods; the algebra comes for free.
 import torch
 from minimal_linop import LinOp, adjoint_error
 
-class Conv1d(LinOp):
-    """Circular convolution with a kernel h."""
-    def __init__(self, h):
-        self.kernel = torch.fft.fft(h)
+class CumSum(LinOp):
+    """Running sum along the last axis; the adjoint is the running sum from the end."""
     def apply(self, x):
-        return torch.fft.ifft(torch.fft.fft(x) * self.kernel)
+        return torch.cumsum(x, dim=-1)
     def applyT(self, y):
-        return torch.fft.ifft(torch.fft.fft(y) * self.kernel.conj())
+        return torch.cumsum(y.flip(-1), dim=-1).flip(-1)
 
-C = Conv1d(torch.randn(64, dtype=torch.complex64))
-assert adjoint_error(C, torch.randn(64, dtype=torch.complex64)) < 1e-5
+S = CumSum()
+assert adjoint_error(S, torch.randn(64, dtype=torch.complex64)) < 1e-5
 ```
 
 Or wrap two functions: `LinOpFunction(apply, applyT, in_shape, out_shape)`. Declare `in_shape` / `out_shape` when they are fixed so compositions can check them, and set `preserves_shape = False` if the operator leaves them undeclared but changes the shape. The name `H` is taken by the adjoint property, so do not use it for an attribute.
@@ -114,16 +120,20 @@ Or wrap two functions: `LinOpFunction(apply, applyT, in_shape, out_shape)`. Decl
 
 ## Conventions worth knowing
 
-- Every `dim` is negative. Operators act on the trailing axes, so an axis counted from the front — which would consume a batch axis — is rejected at construction.
+- Every `dim` is negative. Operators act on the trailing axes, so an axis counted from the front, which would consume a batch axis, is rejected at construction.
 - `norm="ortho"` is the default for the FFT operators, so `Aᴴ = A⁻¹` for them. With `"backward"` or `"forward"` the adjoint is still exact, but it is the opposite transform with the *other* norm, not the inverse.
 - `LinOpCrop` centres like `torch`: it keeps indices `in//2 - out//2` onward. `fourier_origin=True` keeps the low frequencies of a DC-in-the-corner spectrum.
+- `LinOpConv` puts the origin of the kernel at index 0, like `torch.roll` and the FFT: a delta at index 0 is the identity, a delta at index 1 is `LinOpRoll(1)`. A point-spread function with its centre in the middle of the array goes through `torch.fft.ifftshift` first. Real kernel and real input give a real output.
 - `LinOpMul` declares `in_shape = out_shape = c.shape`, unless `c` is a scalar or has a size-1 axis: it then broadcasts, the shape it acts on is not determined by `c`, and it declares none.
 - `LinOpRoll` shifts given as tensors are rounded to the nearest integer (ties to even) and read with `int()`, so operators can be built inside `torch.func` transforms.
-- `LinOpCat` splits its adjoint input according to the sub-operators' `out_shape`; if none is declared, call `apply` once first.
+- `LinOpCat` splits its adjoint input according to the sub-operators' `out_shape`. A sub-operator that declares none must preserve shape, and the columns left over by the declared ones are shared equally among those; a shape-changing sub-operator without a declared `out_shape` is refused rather than guessed.
+- `LinOpPatch` is defined by `patch_by_crop_and_roll`, the same window as a `LinOpCrop @ LinOpRoll` composition. The definition is written first in the source and the tests hold the fast version to it, bit for bit.
 
 ## Relation to other libraries
 
-The same idea as `scipy.sparse.linalg.LinearOperator`, [PyLops](https://pylops.readthedocs.io), [GlobalBioIm](https://biomedical-imaging-group.github.io/GlobalBioIm/) and the `physics` classes of [deepinv](https://deepinv.github.io), reduced to what you need to write and verify forward models in PyTorch, and small enough to read in one sitting. Extracted from the `ciel` computational-imaging library.
+The same idea as `scipy.sparse.linalg.LinearOperator`, [PyLops](https://pylops.readthedocs.io), [GlobalBioIm](https://biomedical-imaging-group.github.io/GlobalBioIm/) and the `physics` classes of [deepinv](https://deepinv.github.io), reduced to what you need to write and verify forward models in PyTorch, readable in full.
+
+Origin: the `LinOp` framework of the `ciel` computational-imaging library (EPFL), where these operators drive phase-retrieval and ptychography models. The classes were reduced, re-derived and re-tested for this package with an AI assistant (Claude) working from a written brief; every formula, line and test was then read and checked by the author.
 
 ## Tutorials
 
@@ -131,7 +141,7 @@ Three notebooks in [`notebooks/`](notebooks/), runnable after `pip install -e ".
 
 1. [Why linear operators](notebooks/01_why_linear_operators.ipynb): reconstruction is `min ½‖Ax − b‖²`, its gradient is `Aᴴ(Ax − b)`; a coherent forward model built by composition, and what a sloppy adjoint does to the solver.
 2. [What it computes](notebooks/02_what_it_computes.ipynb): every identity of the algebra, every adjoint of the catalogue and every convention, checked against brute force in float64.
-3. [Benchmark](notebooks/03_benchmark.ipynb): the overhead against hand-written torch, `LinOpPatch` against `LinOpCrop @ LinOpRoll`, batching, `to_matrix`, precision, and when not to use it.
+3. [Benchmark](notebooks/03_benchmark.ipynb): the overhead against hand-written torch, `LinOpPatch` against its definition, batching, `to_matrix`, precision, and when not to use it.
 
 ## Tests
 
@@ -140,6 +150,17 @@ pip install -e ".[test]" && pip install minimal-fft   # or pip install -e ../min
 pytest                     # add ".[notebooks]" to run the tutorials as tests too
 ```
 
+Every adjoint in the catalogue is checked with the dot-product test and against the dense matrix, `LinOpConv` against a brute-force double sum, `LinOpPatch` against its definition, and the README's Python blocks are executed as a test.
+
 ## License
 
 MIT
+
+## Manifest
+
+- Purpose: linear operators with exact adjoints, and the algebra to compose them, in PyTorch.
+- Dependencies: `torch`. Optional: `minimal-fft` for `LinOpZoomFft`.
+- Size: about 1000 lines of implementation in 7 modules, 20 operators and 3 helpers; about 1000 lines of tests; 3 tutorial notebooks.
+- Origin: the `ciel` computational-imaging library, EPFL.
+- Provenance: written with Claude (Anthropic) from a brief; read and checked in full by Jonathan Dong.
+- Version: 0.1.0, MIT.

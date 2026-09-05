@@ -19,7 +19,9 @@ from .elementary import (
 from .fourier import LinOpFft, LinOpIfft, LinOpFftShift, LinOpZoomFft
 from .spatial import (
     LinOpRoll,
+    LinOpConv,
     LinOpCrop,
+    patch_by_crop_and_roll,
     LinOpPatch,
     LinOpFlip,
     LinOpGrad,
@@ -39,8 +41,8 @@ __all__ = [
     # fourier
     "LinOpFft", "LinOpIfft", "LinOpFftShift", "LinOpZoomFft",
     # spatial
-    "LinOpRoll", "LinOpCrop", "LinOpPatch", "LinOpFlip", "LinOpGrad",
-    "LinOpDownsample", "LinOpUpsample",
+    "LinOpRoll", "LinOpConv", "LinOpCrop", "patch_by_crop_and_roll", "LinOpPatch",
+    "LinOpFlip", "LinOpGrad", "LinOpDownsample", "LinOpUpsample",
     # helpers
     "adjoint_error", "operator_norm", "to_matrix",
 ]

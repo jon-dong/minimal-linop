@@ -92,19 +92,33 @@ class LinOpSumReduce(LinOp):
         return y.expand(shape)
 
 
+def _promoted(a: torch.Tensor, b: torch.Tensor) -> tuple:
+    """``a`` and ``b`` in their common dtype (both untouched when they agree)."""
+    dtype = torch.promote_types(a.dtype, b.dtype)
+    return a.to(dtype), b.to(dtype)
+
+
 class LinOpMatrix(LinOp):
     """A dense matrix ``M`` of shape ``(m, n)`` acting on the last axis:
-    ``A x = M x``; adjoint ``M^H y``."""
+    ``A x = M x``; adjoint ``M^H y``.
+
+    A real matrix acts on a complex input (and a single-precision one on a
+    double input): the two dtypes are promoted to their common one, as
+    element-wise multiplication does, so the output dtype is the input's
+    only when ``M`` has at least the input's precision.
+    """
 
     def __init__(self, matrix: torch.Tensor):
         self.matrix = matrix
         self.in_shape, self.out_shape = (matrix.shape[1],), (matrix.shape[0],)
 
     def apply(self, x):
-        return torch.einsum("ij,...j->...i", self.matrix, x)
+        matrix, x = _promoted(self.matrix, x)
+        return torch.einsum("ij,...j->...i", matrix, x)
 
     def applyT(self, y):
-        return torch.einsum("ij,...i->...j", self.matrix.conj(), y)
+        matrix, y = _promoted(self.matrix.conj(), y)
+        return torch.einsum("ij,...i->...j", matrix, y)
 
 
 class LinOpFunction(LinOp):

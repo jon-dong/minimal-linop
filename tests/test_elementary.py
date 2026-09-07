@@ -9,7 +9,7 @@ from minimal_linop import (
 )
 
 torch.manual_seed(0)
-C64 = torch.complex64
+C64, C128 = torch.complex64, torch.complex128
 
 
 class TestIdentity:
@@ -107,6 +107,22 @@ class TestMatrix:
     def test_batch(self):
         A = LinOpMatrix(torch.randn(3, 4))
         assert A.apply(torch.randn(5, 2, 4)).shape == (5, 2, 3)
+
+    def test_real_matrix_acts_on_a_complex_input(self):
+        M = torch.randn(3, 4)
+        A = LinOpMatrix(M)
+        x, y = torch.randn(2, 4, dtype=C64), torch.randn(2, 3, dtype=C64)
+        assert torch.allclose(A.apply(x), x @ M.to(C64).T, atol=1e-6)
+        assert torch.allclose(A.applyT(y), y @ M.to(C64), atol=1e-6)
+        assert adjoint_error(A, x, y) < 1e-5
+
+    def test_dtypes_are_promoted_like_a_product(self):
+        A = LinOpMatrix(torch.randn(3, 4, dtype=torch.float64))
+        assert A.apply(torch.randn(4)).dtype == torch.float64
+        assert A.applyT(torch.randn(3)).dtype == torch.float64
+        B = LinOpMatrix(torch.randn(3, 4))
+        assert B.apply(torch.randn(4, dtype=C128)).dtype == C128
+        assert B.apply(torch.randn(4)).dtype == torch.float32
 
 
 class TestFunction:

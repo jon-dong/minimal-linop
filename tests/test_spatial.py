@@ -4,7 +4,7 @@ import torch
 
 from minimal_linop import (
     LinOpRoll, LinOpConv, LinOpCrop, patch_by_crop_and_roll, LinOpPatch, LinOpFlip,
-    LinOpGrad, LinOpDownsample, LinOpUpsample, adjoint_error, to_matrix,
+    LinOpGrad, LinOpDownsample, LinOpUpsample, LinOpFftShift, adjoint_error, to_matrix,
 )
 
 torch.manual_seed(0)
@@ -149,6 +149,17 @@ class TestCrop:
         assert A.apply(x).shape == A.out_shape and A.applyT(y).shape == A.in_shape
         assert torch.equal(A.apply(A.applyT(y)), y)
         assert adjoint_error(A, x, y) < 1e-6
+
+    @pytest.mark.parametrize("in_s,out_s", [(8, 4), (9, 5), (9, 4), (12, 3), ((11, 7), (6, 4)),
+                                            ((12, 10), (3, 5))])
+    def test_fourier_origin_is_ifftshift_crop_fftshift(self, in_s, out_s):
+        """The identity the docstring states, in both directions."""
+        A = LinOpCrop(in_s, out_s, fourier_origin=True)
+        shift = LinOpFftShift(dim=A.dim)
+        ref = shift.H @ LinOpCrop(in_s, out_s) @ shift
+        x, y = torch.randn(2, *A.in_shape, dtype=C64), torch.randn(2, *A.out_shape, dtype=C64)
+        assert torch.equal(A.apply(x), ref.apply(x))
+        assert torch.equal(A.applyT(y), ref.applyT(y))
 
     def test_fourier_origin_keeps_low_frequencies(self):
         X = torch.fft.fft(torch.randn(16, dtype=C64))

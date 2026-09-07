@@ -85,7 +85,9 @@ class LinOpCrop(LinOp):
 
     ``fourier_origin=True`` crops around the Fourier origin instead: it keeps
     the corner blocks of a DC-in-the-corner spectrum and discards the middle
-    (high) frequencies.
+    (high) frequencies.  It is exactly ``ifftshift . crop . fftshift``, the
+    central crop taken with the origin moved to the middle first, which is
+    where the ``(o + 1) // 2`` split of the kept block comes from.
     """
 
     def __init__(self, in_shape, out_shape, fourier_origin=False):
@@ -114,15 +116,11 @@ class LinOpCrop(LinOp):
                 y = pad_axis(y, d, s, i - s - o)
             return y
         for d, lo, i, o in zip(self.dim, self._fc_starts, self.in_shape, self.out_shape):
-            y = torch.cat([y.narrow(d, 0, lo), y.new_zeros(_with(y.shape, d, i - o)),
+            gap = list(y.shape)
+            gap[d] = i - o                       # the discarded middle, as zeros
+            y = torch.cat([y.narrow(d, 0, lo), y.new_zeros(gap),
                            y.narrow(d, lo, o - lo)], dim=d)
         return y
-
-
-def _with(shape, dim, size):
-    shape = list(shape)
-    shape[dim] = size
-    return shape
 
 
 def patch_by_crop_and_roll(in_shape, out_shape, shifts=None, pad_zeros=False, fourier_origin=False):

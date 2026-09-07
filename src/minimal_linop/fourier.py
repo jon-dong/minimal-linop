@@ -37,13 +37,13 @@ class LinOpFft(LinOp):
 
     def __init__(self, dim=-1, norm="ortho"):
         self.dim, self.norm = as_dims(dim), norm
-        _conjugate_norm(norm)
+        self.adjoint_norm = _conjugate_norm(norm)
 
     def apply(self, x):
         return torch.fft.fftn(x, dim=self.dim, norm=self.norm)
 
     def applyT(self, y):
-        return torch.fft.ifftn(y, dim=self.dim, norm=_conjugate_norm(self.norm))
+        return torch.fft.ifftn(y, dim=self.dim, norm=self.adjoint_norm)
 
 
 class LinOpIfft(LinOpFft):
@@ -53,7 +53,7 @@ class LinOpIfft(LinOpFft):
         return torch.fft.ifftn(x, dim=self.dim, norm=self.norm)
 
     def applyT(self, y):
-        return torch.fft.fftn(y, dim=self.dim, norm=_conjugate_norm(self.norm))
+        return torch.fft.fftn(y, dim=self.dim, norm=self.adjoint_norm)
 
 
 class LinOpFftShift(LinOp):
@@ -105,7 +105,7 @@ class LinOpZoomFft(LinOp):
         self.dim = tuple(range(-len(self.in_shape), 0))
         self.k_start, self.k_end, self.norm = k_start, k_end, norm
         self.center, self.include_end = center, include_end
-        _conjugate_norm(norm)
+        self.adjoint_norm = _conjugate_norm(norm)
 
     def apply(self, x):
         return self._fft.zoom_fft(
@@ -115,5 +115,4 @@ class LinOpZoomFft(LinOp):
     def applyT(self, y):
         return self._fft.zoom_ifft(
             y, self.in_shape, self.k_start, self.k_end, dim=self.dim,
-            norm=_conjugate_norm(self.norm), center=self.center,
-            include_end=self.include_end)
+            norm=self.adjoint_norm, center=self.center, include_end=self.include_end)

@@ -165,6 +165,8 @@ class LinOpCat(LinOp):
         self.in_shape = next(iter(ins)) if ins else None
 
         outs = [op.out_shape for op in self.ops]
+        # The last-axis width each sub-operator declares; None where it declares none.
+        self._declared = [None if o is None else o[-1] for o in outs]
         if all(o is not None for o in outs):
             leads = {tuple(o[:-1]) for o in outs}
             if len(leads) > 1:
@@ -172,7 +174,7 @@ class LinOpCat(LinOp):
                     "sub-operators must agree on every output axis except the last "
                     f"(the concatenation axis); got {sorted(leads)}"
                 )
-            self.out_shape = next(iter(leads)) + (sum(o[-1] for o in outs),)
+            self.out_shape = next(iter(leads)) + (sum(self._declared),)
         elif (all(o is None for o in outs) and self.in_shape is not None
               and all(op.preserves_shape for op in self.ops)):
             self.out_shape = self.in_shape[:-1] + (len(self.ops) * self.in_shape[-1],)
@@ -181,8 +183,9 @@ class LinOpCat(LinOp):
         self.preserves_shape = len(self.ops) == 1 and self.ops[0].preserves_shape
 
     def _widths(self, y):
-        """How the last axis of ``y`` splits among the sub-operators."""
-        widths = [None if op.out_shape is None else op.out_shape[-1] for op in self.ops]
+        """How the last axis of ``y`` splits among the sub-operators: the
+        declared widths, and an equal share of what is left for the rest."""
+        widths = self._declared
         free = [k for k, w in enumerate(widths) if w is None]
         if not all(self.ops[k].preserves_shape for k in free):
             raise ValueError(

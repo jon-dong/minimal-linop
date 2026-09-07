@@ -135,7 +135,7 @@ Or wrap two functions: `LinOpFunction(apply, applyT, in_shape, out_shape)`. Decl
 
 The same idea as `scipy.sparse.linalg.LinearOperator`, [PyLops](https://pylops.readthedocs.io), [GlobalBioIm](https://biomedical-imaging-group.github.io/GlobalBioIm/) and the `physics` classes of [deepinv](https://deepinv.github.io), reduced to what you need to write and verify forward models in PyTorch, readable in full.
 
-Origin: the `LinOp` framework of the `ciel` computational-imaging library (EPFL), where these operators drive phase-retrieval and ptychography models. The classes were reduced, re-derived and re-tested for this package with an AI assistant (Claude) working from a written brief; every formula, line and test was then read and checked by the author.
+The operators come from the `LinOp` framework of the `ciel` computational-imaging library (EPFL), where they drive phase-retrieval and ptychography models; the classes were reduced, re-derived and re-tested for this package.
 
 ## Tutorials
 
@@ -162,7 +162,7 @@ MIT
 
 - Purpose: linear operators with exact adjoints, and the algebra to compose them, in PyTorch.
 - Dependencies: `torch`. Optional: `minimal-zoom-fft` for `LinOpZoomFft`.
-- Size: about 1000 lines of implementation in 7 modules, 20 operators and 3 helpers; about 1000 lines of tests; 3 tutorial notebooks.
+- Size: about 1000 lines of implementation in 7 modules, 29 public names (the base class, 24 operators, the patch definition and 3 helpers); about 1100 lines of tests; 3 tutorial notebooks.
 - Origin: the `ciel` computational-imaging library, EPFL.
 - Provenance: written with Claude (Anthropic) from a brief; read and checked in full by Jonathan Dong.
 - Version: 0.1.0, MIT.

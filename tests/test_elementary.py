@@ -161,6 +161,10 @@ class TestCat:
         assert A.out_shape == tuple(A.apply(x).shape) == (8, 24)
         assert adjoint_error(A, x, torch.randn(8, 24, dtype=C64)) < 1e-5
 
+    def test_empty_list_raises(self):
+        with pytest.raises(ValueError, match="at least one"):
+            LinOpCat([])
+
     def test_in_shape_mismatch_raises(self):
         with pytest.raises(ValueError, match="in_shape"):
             LinOpCat([LinOpMatrix(torch.randn(4, 8)), LinOpMatrix(torch.randn(4, 6))])

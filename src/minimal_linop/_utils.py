@@ -14,8 +14,8 @@ def as_dims(dim) -> tuple:
     """``dim`` as a tuple of negative ints (int -> 1-tuple).
 
     Only negative axes are accepted: operators act on the trailing axes and
-    leave the leading (batch) axes alone, which a positive axis -- counted
-    from the front -- would silently break.
+    leave the leading (batch) axes alone, which a positive axis, counted
+    from the front, would silently break.
     """
     dims = (int(dim),) if isinstance(dim, int) else tuple(int(d) for d in dim)
     if any(d >= 0 for d in dims):

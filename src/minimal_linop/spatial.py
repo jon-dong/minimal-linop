@@ -207,11 +207,11 @@ class LinOpPatch(LinOp):
             y = torch.where(mask, y, y.new_zeros(()))
         # index_put addresses leading axes, so the window axes go first and
         # the batch axes last, and back again afterwards.
-        batch = y.ndim - self.ndim
-        y = y.permute(*range(batch, y.ndim), *range(batch))
+        window, front = tuple(range(-self.ndim, 0)), tuple(range(self.ndim))
+        y = y.movedim(window, front)
         z = y.new_zeros(self.in_shape + y.shape[self.ndim:])
         z = z.index_put(idxs, y, accumulate=True)
-        return z.permute(*range(self.ndim, z.ndim), *range(self.ndim))
+        return z.movedim(front, window)
 
 
 class LinOpFlip(LinOp):

@@ -159,6 +159,8 @@ class LinOpCat(LinOp):
 
     def __init__(self, ops):
         self.ops = list(ops)
+        if not self.ops:
+            raise ValueError("LinOpCat needs at least one sub-operator")
         ins = {tuple(op.in_shape) for op in self.ops if op.in_shape is not None}
         if len(ins) > 1:
             raise ValueError(f"sub-operators must share the same in_shape; got {sorted(ins)}")

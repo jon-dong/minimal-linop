@@ -216,6 +216,18 @@ class TestPatch:
         y = torch.randn(6, 4, dtype=C64)
         assert torch.equal(A.applyT(y), ref.applyT(y))
 
+    @pytest.mark.parametrize("kwargs", [
+        dict(in_shape=(8, 8), out_shape=(16, 4)),                    # window larger than the signal
+        dict(in_shape=(8, 8), out_shape=(4,)),                       # a different number of axes
+        dict(in_shape=(8, 8), out_shape=(4, 4), shifts=(1, 2, 3)),   # one shift too many
+    ])
+    def test_refuses_what_its_definition_refuses(self, kwargs):
+        """The twins agree on what they reject, not only on what they compute."""
+        with pytest.raises(ValueError):
+            LinOpPatch(**kwargs)
+        with pytest.raises(ValueError):
+            patch_by_crop_and_roll(**kwargs)
+
     @pytest.mark.parametrize("pad_zeros", [False, True])
     def test_adjoint_batch_and_vmap(self, pad_zeros):
         A = LinOpPatch((9, 12), (4, 6), shifts=(2, -3), pad_zeros=pad_zeros)

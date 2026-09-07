@@ -25,7 +25,7 @@ class LinOp(ABC):
     shape; an operator that does not (``LinOpGrad``) sets the class attribute
     ``preserves_shape = False`` and the composition leaves the shape unknown.
 
-    Algebra -- every expression returns a new ``LinOp``::
+    Algebra (every expression returns a new ``LinOp``)::
 
         A @ B      composition:  (A @ B)(x) = A(B(x))
         A @ x      A.apply(x) when x is a tensor; so is A(x)

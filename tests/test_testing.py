@@ -24,6 +24,21 @@ class WrongAdjoint(LinOp):
         return 3.0 * y
 
 
+class GradSpy(LinOp):
+    """2 I, noting at each call whether autograd is recording."""
+
+    def __init__(self):
+        self.recording = []
+
+    def apply(self, x):
+        self.recording.append(torch.is_grad_enabled())
+        return 2.0 * x
+
+    def applyT(self, y):
+        self.recording.append(torch.is_grad_enabled())
+        return 2.0 * y
+
+
 class TestAdjointError:
 
     def test_correct_adjoint_is_tiny(self):
@@ -56,6 +71,15 @@ class TestAdjointError:
 
         e = adjoint_error(Zero(), torch.ones(8), torch.ones(8))
         assert 0.1 < e <= 1.0 + 1e-6              # bounded by Cauchy-Schwarz
+
+    def test_runs_without_recording_a_graph(self):
+        """The check is not differentiated: a tensor that requires grad, or an
+        operator with learnable coefficients, is compared under no_grad."""
+        spy, x = GradSpy(), torch.randn(8, requires_grad=True)
+        assert adjoint_error(spy, x) < 1e-6
+        assert spy.recording == [False, False] and torch.is_grad_enabled()
+        probe = torch.randn(8, dtype=C64, requires_grad=True)
+        assert adjoint_error(LinOpMul(probe), torch.randn(8, dtype=C64)) < 1e-5
 
 
 class TestOperatorNorm:
@@ -99,8 +123,15 @@ class TestOperatorNorm:
     def test_bad_arguments(self):
         with pytest.raises(ValueError, match="n_iter"):
             operator_norm(LinOpIdentity(), torch.randn(4), n_iter=0)
+        with pytest.raises(TypeError, match="n_iter"):
+            operator_norm(LinOpIdentity(), torch.randn(4), n_iter=2.5)
         with pytest.raises(ValueError, match="x0"):
             operator_norm(LinOpIdentity(), torch.zeros(4))
+
+    def test_runs_without_recording_a_graph(self):
+        spy, x0 = GradSpy(), torch.randn(8, requires_grad=True)
+        assert operator_norm(spy, x0, n_iter=3) == pytest.approx(2.0, rel=1e-6)
+        assert spy.recording == [False] * 6 and torch.is_grad_enabled()
 
 
 class TestToMatrix:
@@ -200,6 +231,68 @@ def test_every_operator_declares_the_shapes_it_produces(name, op, x, y):
         assert tuple(op.apply(x).shape[-len(op.out_shape):]) == op.out_shape
 
 
+# --- integer arguments: sizes, factors, axes ---------------------------------
+
+class Index:
+    """An integer that is not a Python int, the way a NumPy integer is: it
+    only has ``__index__``."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def __index__(self):
+        return self.value
+
+
+class TestIntegerArguments:
+    """Whatever is an integer counts as one (a NumPy integer, a 0-d integer
+    tensor); a float does not, even a whole one; a size is not negative."""
+
+    def test_integers_that_are_not_python_ints_are_accepted(self):
+        i = Index
+        assert LinOpCrop(i(8), i(4)).out_shape == (4,)
+        assert LinOpCrop((i(8), torch.tensor(6)), (4, i(3))).in_shape == (8, 6)
+        assert LinOpPatch((i(8), 6), (i(4), 3), shifts=(1, 2)).out_shape == (4, 3)
+        assert LinOpDownsample(i(9), i(2)).out_shape == (5,)
+        assert LinOpUpsample(i(3), torch.tensor(2)).out_shape == (6,)
+        assert LinOpSumReduce(i(-2), i(4)).size == 4
+        assert LinOpGrad(i(2)).ndim == 2
+        assert LinOpFft(dim=i(-1)).dim == (-1,) and LinOpFlip(dim=(i(-2), -1)).dim == (-2, -1)
+        assert LinOpFunction(lambda x: x, lambda y: y, in_shape=i(8)).in_shape == (8,)
+        assert to_matrix(LinOpFft(), in_shape=i(4)).shape == (4, 4)
+        assert operator_norm(LinOpIdentity(), torch.randn(4), n_iter=i(3)) == pytest.approx(1.0)
+        assert all(type(s) is int for s in LinOpCrop(i(8), torch.tensor(4)).out_shape)
+
+    def test_numpy_integers_are_accepted(self):
+        np = pytest.importorskip("numpy")
+        assert LinOpCrop(np.int64(8), np.int64(4)).out_shape == (4,)
+        assert LinOpCrop(np.array([8, 6]), np.array([4, 3])).in_shape == (8, 6)
+        assert LinOpDownsample(np.int32(9), np.int64(2)).out_shape == (5,)
+        assert LinOpFft(dim=np.int64(-1)).dim == (-1,)
+        assert to_matrix(LinOpFft(), in_shape=np.int64(4)).shape == (4, 4)
+
+    @pytest.mark.parametrize("make", [
+        lambda: LinOpCrop(8.0, 4), lambda: LinOpCrop(8, 3.7), lambda: LinOpCrop((8, 8.0), (4, 4)),
+        lambda: LinOpPatch(8, 4.0), lambda: LinOpDownsample(8, 2.5), lambda: LinOpUpsample(4, 2.0),
+        lambda: LinOpSumReduce(-1, 3.5), lambda: LinOpGrad(2.5),
+        lambda: LinOpFft(dim=-1.0), lambda: LinOpFft(dim=None), lambda: LinOpRoll(1, dim=(-2.0,)),
+        lambda: LinOpFunction(lambda x: x, lambda y: y, in_shape=8.0),
+        lambda: to_matrix(LinOpFft(), in_shape=4.0),
+    ])
+    def test_a_float_is_not_an_integer(self, make):
+        with pytest.raises(TypeError, match="integer"):
+            make()
+
+    @pytest.mark.parametrize("make", [
+        lambda: LinOpCrop(8, -2), lambda: LinOpCrop(-8, -8), lambda: LinOpPatch(8, -2),
+        lambda: LinOpDownsample(-8), lambda: LinOpDownsample(8, -2), lambda: LinOpDownsample(8, 0),
+        lambda: LinOpUpsample(-4), lambda: LinOpUpsample(4, 0), lambda: LinOpSumReduce(-1, -3),
+    ])
+    def test_a_size_is_not_negative_and_a_factor_is_at_least_one(self, make):
+        with pytest.raises(ValueError):
+            make()
+
+
 def test_every_public_operator_is_exported():
     missing = [n for n in dir(minimal_linop) if n.startswith("LinOp") and n not in minimal_linop.__all__]
     assert missing == []
@@ -209,3 +302,27 @@ def test_the_catalogue_test_covers_every_exported_operator():
     covered = {name for name, *_ in CATALOGUE}
     exported = {n for n in minimal_linop.__all__ if n.startswith("LinOp") and n != "LinOp"}
     assert exported - covered <= {"LinOpZoomFft"}      # skipped without minimal-zoom-fft
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+def test_operators_work_when_mps_is_the_default_device():
+    """Index tables and masks follow the input, wherever torch creates
+    tensors by default: on an MPS input and on a CPU one."""
+    torch.set_default_device("mps")
+    try:
+        ops = [
+            LinOpPatch((6, 8), (3, 4), shifts=(1, -2), pad_zeros=True),
+            LinOpRoll((1, -2), dim=(-2, -1), pad_zeros=True),
+            LinOpCrop((6, 8), (3, 4), fourier_origin=True),
+            LinOpGrad(2),
+            LinOpDownsample((6, 8), 3),
+        ]
+        for device in ("mps", "cpu"):
+            x = torch.randn(2, 6, 8, dtype=C64, device=device)
+            for op in ops:
+                y = op.apply(x)
+                assert y.device.type == device and op.applyT(y).device.type == device
+                assert adjoint_error(op, x) < 1e-5
+        assert to_matrix(LinOpFft(), in_shape=4).device.type == "mps"
+    finally:
+        torch.set_default_device("cpu")

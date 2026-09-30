@@ -109,6 +109,27 @@ class TestConv:
         assert LinOpConv(h.to(C64)).apply(x).dtype == C64
         assert adjoint_error(A, x, torch.randn(3, 4, 5)) < 1e-6
 
+    @pytest.mark.parametrize("kernel_dtype,input_dtype,out_dtype", [
+        (torch.float32, torch.float64, torch.float64),
+        (torch.float64, torch.float32, torch.float64),
+        (C64, torch.float64, torch.complex128),
+        (torch.float32, torch.complex128, torch.complex128),
+        (torch.float64, C64, torch.complex128),
+    ])
+    def test_mixed_precision_is_computed_in_the_common_precision(self, kernel_dtype, input_dtype, out_dtype):
+        """A float32 kernel on a float64 input is the float64 convolution of
+        the same numbers, as for LinOpMul and LinOpMatrix: the output has the
+        promoted dtype and the accuracy that goes with it, in both directions."""
+        h, x = torch.randn(5, 7, dtype=kernel_dtype), torch.randn(5, 7, dtype=input_dtype)
+        A = LinOpConv(h)
+        y = A.apply(x)
+        assert y.dtype == out_dtype
+        assert (y - circular_convolution_2d(h.to(out_dtype), x.to(out_dtype))).abs().max() < 1e-12
+        h_adj = torch.roll(torch.flip(h, dims=(-2, -1)), shifts=(1, 1), dims=(-2, -1)).conj()
+        z = A.applyT(x)
+        assert z.dtype == out_dtype
+        assert (z - circular_convolution_2d(h_adj.to(out_dtype), x.to(out_dtype))).abs().max() < 1e-12
+
     def test_shapes_and_matrix_is_circulant(self):
         h = torch.randn(6)
         A = LinOpConv(h)

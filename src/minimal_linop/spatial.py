@@ -4,7 +4,7 @@ or on the last ``len(in_shape)`` axes."""
 
 import torch
 
-from ._utils import as_dims, as_ints, as_shape, pad_axis
+from ._utils import as_dims, as_index, as_ints, as_shape, pad_axis
 from .base import LinOp
 
 __all__ = [
@@ -60,6 +60,12 @@ class LinOpConv(LinOp):
     A point-spread function stored with its centre in the middle of the array
     goes through ``torch.fft.ifftshift`` first.  The input's trailing shape
     must be ``h.shape``; the output is real when both ``x`` and ``h`` are.
+
+    Kernel and input meet in their common precision before the transforms, as
+    the two factors of a product do, so a float32 kernel on a float64 input
+    gives the float64 convolution of the same numbers.  The transfer function
+    is computed once, in the precision of the kernel; an input more precise
+    than the kernel costs one more transform of the kernel per application.
     """
 
     def __init__(self, kernel: torch.Tensor):
@@ -68,15 +74,26 @@ class LinOpConv(LinOp):
         self.dim = tuple(range(-kernel.ndim, 0))
         self.transfer = torch.fft.fftn(kernel, dim=self.dim)
 
+    def _in_common_precision(self, x):
+        """The transfer function and ``x`` in the precision of the more
+        precise of the kernel and ``x``, each staying real or complex as it
+        is (both untouched when the precisions agree)."""
+        real = torch.promote_types(self.kernel.real.dtype, x.real.dtype)
+        kernel = self.kernel.to(torch.promote_types(self.kernel.dtype, real))
+        transfer = self.transfer if kernel is self.kernel else torch.fft.fftn(kernel, dim=self.dim)
+        return transfer, x.to(torch.promote_types(x.dtype, real))
+
     def _filter(self, x, transfer):
         y = torch.fft.ifftn(torch.fft.fftn(x, dim=self.dim) * transfer, dim=self.dim)
         return y if x.is_complex() or self.kernel.is_complex() else y.real
 
     def apply(self, x):
-        return self._filter(x, self.transfer)
+        transfer, x = self._in_common_precision(x)
+        return self._filter(x, transfer)
 
     def applyT(self, y):
-        return self._filter(y, self.transfer.conj())
+        transfer, y = self._in_common_precision(y)
+        return self._filter(y, transfer.conj())
 
 
 class LinOpCrop(LinOp):
@@ -244,7 +261,7 @@ class LinOpGrad(LinOp):
     preserves_shape = False
 
     def __init__(self, ndim=2):
-        self.ndim = int(ndim)
+        self.ndim = as_index(ndim, "ndim")
 
     def apply(self, x):
         grads = []
@@ -263,12 +280,20 @@ class LinOpGrad(LinOp):
         return out
 
 
+def _as_factor(factor) -> int:
+    """A resampling factor as a Python int, at least 1."""
+    factor = as_index(factor, "factor")
+    if factor < 1:
+        raise ValueError(f"factor must be at least 1; got {factor}")
+    return factor
+
+
 class LinOpDownsample(LinOp):
     """Keep every ``factor``-th sample along the last ``len(in_shape)`` axes
     (starting at index 0); the adjoint puts them back and fills with zeros."""
 
     def __init__(self, in_shape, factor=2):
-        self.in_shape, self.factor = as_shape(in_shape), int(factor)
+        self.in_shape, self.factor = as_shape(in_shape), _as_factor(factor)
         self.out_shape = tuple(-(-n // self.factor) for n in self.in_shape)
         self.dim = tuple(range(-len(self.in_shape), 0))
 
@@ -291,7 +316,7 @@ class LinOpUpsample(LinOp):
     each ``factor``-block."""
 
     def __init__(self, in_shape, factor=2):
-        self.in_shape, self.factor = as_shape(in_shape), int(factor)
+        self.in_shape, self.factor = as_shape(in_shape), _as_factor(factor)
         self.out_shape = tuple(n * self.factor for n in self.in_shape)
         self.dim = tuple(range(-len(self.in_shape), 0))
 

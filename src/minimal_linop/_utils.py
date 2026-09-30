@@ -1,5 +1,7 @@
 """Private helpers shared by the operator modules."""
 
+import operator
+
 import torch
 
 _COMPLEX_DTYPE = {
@@ -10,6 +12,32 @@ _COMPLEX_DTYPE = {
 }
 
 
+def as_index(value, what: str) -> int:
+    """An integer argument as a Python int.
+
+    Whatever is an integer counts (a NumPy integer, a 0-d integer tensor); a
+    float does not, even a whole one, and is refused rather than truncated.
+    """
+    try:
+        return operator.index(value)
+    except TypeError:
+        raise TypeError(f"{what} must be an integer; got {value!r}") from None
+
+
+def _as_indices(values, what: str) -> tuple:
+    """One integer, or a sequence of integers, as a tuple of Python ints."""
+    try:
+        return (operator.index(values),)
+    except TypeError:
+        pass
+    try:
+        return tuple(operator.index(v) for v in values)
+    except TypeError:
+        raise TypeError(
+            f"{what} must be an integer or a sequence of integers; got {values!r}"
+        ) from None
+
+
 def as_dims(dim) -> tuple:
     """``dim`` as a tuple of negative ints (int -> 1-tuple).
 
@@ -17,7 +45,7 @@ def as_dims(dim) -> tuple:
     leave the leading (batch) axes alone, which a positive axis, counted
     from the front, would silently break.
     """
-    dims = (int(dim),) if isinstance(dim, int) else tuple(int(d) for d in dim)
+    dims = _as_indices(dim, "dim")
     if any(d >= 0 for d in dims):
         raise ValueError(
             f"dim must be negative, so that the operator acts on trailing axes; got {dim!r}"
@@ -26,8 +54,11 @@ def as_dims(dim) -> tuple:
 
 
 def as_shape(shape) -> tuple:
-    """A shape as a tuple of ints (int -> 1-tuple)."""
-    return (int(shape),) if isinstance(shape, int) else tuple(int(s) for s in shape)
+    """A shape as a tuple of non-negative ints (int -> 1-tuple)."""
+    sizes = _as_indices(shape, "a shape")
+    if any(s < 0 for s in sizes):
+        raise ValueError(f"a shape has no negative size; got {shape!r}")
+    return sizes
 
 
 def _to_int(v) -> int:

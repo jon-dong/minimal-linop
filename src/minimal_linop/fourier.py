@@ -92,12 +92,13 @@ class LinOpZoomFft(LinOp):
     def __init__(self, in_shape, out_shape=None, k_start=0.0, k_end=2 * math.pi,
                  norm="ortho", center=False, include_end=False):
         try:
-            import minimal_zoom_fft
+            from minimal_zoom_fft import zoom_fft, zoom_ifft
         except ImportError as e:
             raise ImportError(
                 "LinOpZoomFft needs the minimal-zoom-fft package: pip install minimal-zoom-fft"
             ) from e
-        self._fft = minimal_zoom_fft
+        # The two functions, not the module: a module can be neither copied nor pickled.
+        self._zoom_fft, self._zoom_ifft = zoom_fft, zoom_ifft
         self.in_shape = as_shape(in_shape)
         self.out_shape = self.in_shape if out_shape is None else as_shape(out_shape)
         if len(self.out_shape) != len(self.in_shape):
@@ -108,11 +109,11 @@ class LinOpZoomFft(LinOp):
         self.adjoint_norm = _conjugate_norm(norm)
 
     def apply(self, x):
-        return self._fft.zoom_fft(
+        return self._zoom_fft(
             x, self.out_shape, self.k_start, self.k_end, dim=self.dim, norm=self.norm,
             center=self.center, include_end=self.include_end)
 
     def applyT(self, y):
-        return self._fft.zoom_ifft(
+        return self._zoom_ifft(
             y, self.in_shape, self.k_start, self.k_end, dim=self.dim,
             norm=self.adjoint_norm, center=self.center, include_end=self.include_end)

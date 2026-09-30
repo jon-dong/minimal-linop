@@ -3,7 +3,7 @@ dense matrices, function wrappers and concatenation."""
 
 import torch
 
-from ._utils import as_dims, as_shape, complex_dtype
+from ._utils import as_dims, as_index, as_shape, complex_dtype
 from .base import LinOp
 
 __all__ = [
@@ -81,7 +81,9 @@ class LinOpSumReduce(LinOp):
         dims = as_dims(dim)                      # one trailing (negative) axis
         if len(dims) != 1:
             raise ValueError("LinOpSumReduce reduces exactly one axis")
-        self.dim, self.size = dims[0], int(size)
+        self.dim, self.size = dims[0], as_index(size, "size")
+        if self.size < 0:
+            raise ValueError(f"size must not be negative; got {size!r}")
 
     def apply(self, x):
         return x.sum(dim=self.dim, keepdim=True)

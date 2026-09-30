@@ -1,5 +1,7 @@
 """Fft, Ifft, FftShift and ZoomFft."""
+import copy
 import math
+import pickle
 
 import pytest
 import torch
@@ -105,3 +107,13 @@ class TestZoomFft:
         pupil = LinOpMul(torch.randn(16, 16, dtype=C128))
         A = LinOpZoomFft((16, 16), (40, 40), k_start=-1.0, k_end=1.0, center=True) @ pupil
         assert adjoint_error(A, torch.randn(16, 16, dtype=C128), torch.randn(40, 40, dtype=C128)) < 1e-12
+
+    def test_copies_and_pickles(self):
+        """The operator holds the two transforms, not their module, so a model
+        built on it is deep-copied and pickled like any other operator."""
+        A = LinOpFft(dim=(-2, -1)) @ LinOpZoomFft((9, 12), (5, 7), k_start=-0.4, k_end=0.9, center=True)
+        x = torch.randn(9, 12, dtype=C128)
+        y = A.apply(x)
+        for B in (copy.deepcopy(A), pickle.loads(pickle.dumps(A))):
+            assert torch.equal(B.apply(x), y)
+            assert torch.equal(B.applyT(y), A.applyT(y))

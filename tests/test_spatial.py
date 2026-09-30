@@ -277,6 +277,11 @@ class TestGrad:
         assert LinOpGrad(2).preserves_shape is False
         assert LinOpGrad(2).in_shape is None and LinOpGrad(2).out_shape is None
 
+    def test_needs_at_least_one_axis(self):
+        for ndim in (0, -1):
+            with pytest.raises(ValueError, match="ndim"):
+                LinOpGrad(ndim)
+
     def test_size_one_axis(self):
         A = LinOpGrad(2)
         x = torch.randn(1, 5)

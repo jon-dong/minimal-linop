@@ -262,6 +262,8 @@ class LinOpGrad(LinOp):
 
     def __init__(self, ndim=2):
         self.ndim = as_index(ndim, "ndim")
+        if self.ndim < 1:
+            raise ValueError(f"ndim must be at least 1; got {self.ndim}")
 
     def apply(self, x):
         grads = []

@@ -5,7 +5,7 @@ import torch
 from minimal_linop import (
     LinOp, LinOpComposition, LinOpSum, LinOpScalarMul, LinOpAdjoint,
     LinOpMatrix, LinOpFft, LinOpIdentity, LinOpGrad, LinOpCrop, LinOpMul,
-    LinOpReal, LinOpImag, adjoint_error, to_matrix,
+    LinOpReal, LinOpImag, LinOpFunction, adjoint_error, to_matrix,
 )
 
 torch.manual_seed(0)
@@ -74,6 +74,21 @@ class TestComposition:
     def test_incompatible_shapes_raise(self):
         with pytest.raises(ValueError, match="A @ B"):
             cmat(2, 3) @ cmat(5, 4)
+
+    def test_declared_shapes_must_be_equal_not_only_compatible(self):
+        """A matrix on the last axis applies to the output of a 2-D crop, but
+        (8,) is not (4, 8) and the composition is refused.  Wrapped in a
+        LinOpFunction it declares nothing and composes."""
+        M, crop = LinOpMatrix(torch.randn(5, 8)), LinOpCrop((8, 8), (4, 8))
+        assert M.apply(crop.apply(torch.randn(8, 8))).shape == (4, 5)
+        with pytest.raises(ValueError, match="A @ B"):
+            M @ crop
+        W = LinOpFunction(M.apply, M.applyT)
+        W.preserves_shape = False                     # (4, 8) -> (4, 5)
+        A = W @ crop
+        assert A.in_shape == (8, 8) and A.out_shape is None
+        assert A.apply(torch.randn(3, 8, 8)).shape == (3, 4, 5)
+        assert adjoint_error(A, torch.randn(8, 8), torch.randn(4, 5)) < 1e-6
 
     def test_nested_adjoint(self):
         A, B, C, D = (cmat(4, 4) for _ in range(4))

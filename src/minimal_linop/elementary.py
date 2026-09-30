@@ -107,7 +107,8 @@ class LinOpMatrix(LinOp):
     A real matrix acts on a complex input (and a single-precision one on a
     double input): the two dtypes are promoted to their common one, as
     element-wise multiplication does, so the output dtype is the input's
-    only when ``M`` has at least the input's precision.
+    only when ``M`` has at most the input's precision (and is real unless
+    the input is complex).
     """
 
     def __init__(self, matrix: torch.Tensor):

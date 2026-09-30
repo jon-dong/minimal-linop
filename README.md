@@ -64,6 +64,8 @@ Every expression below returns a new operator; nothing is materialised.
 
 Shapes: `in_shape` / `out_shape` describe the trailing axes an operator acts on; `None` means shape-agnostic (an FFT accepts any length) and is compatible with everything. Sums and compositions check declared shapes at construction. A composition fills a shape the shape-agnostic side leaves undeclared from the other side, which assumes that side preserves shape; an operator that does not says so with `preserves_shape = False` (`LinOpGrad`, `LinOpSumReduce`, a `LinOpCat` of several operators) and the composition leaves the shape unknown rather than guessing it wrong.
 
+Two declared shapes must be equal to compose: with `M` of shape `(5, 8)`, `LinOpMatrix(M) @ LinOpCrop((8, 8), (4, 8))` is refused, although the matrix applies to the last axis of the cropped image. Wrap such an operator `A` so that it declares nothing, `W = LinOpFunction(A.apply, A.applyT)`, and set `W.preserves_shape = False` if it changes the shape. Declared shapes are compared when operators are composed or added, not when an operator is applied: an input whose trailing shape is not `in_shape` is not refused, so that check is yours where it matters. At construction a size, a factor or an axis must be an integer (a NumPy integer counts, a float does not) and a size cannot be negative.
+
 ## Catalogue
 
 Formulas are written along one axis, `n` indexing the output and `N` the axis length; N-D operators apply them on every axis they act on. Indices are taken modulo `N` where the formula says *circular*.
@@ -115,8 +117,8 @@ Or wrap two functions: `LinOpFunction(apply, applyT, in_shape, out_shape)`. Decl
 ## Checking operators
 
 - `adjoint_error(A, x, y=None)` returns `|Re⟨A x, y⟩ − Re⟨x, Aᴴ y⟩| / (‖A x‖ ‖y‖)`, with the denominator falling back to `‖x‖ ‖Aᴴ y‖` when `A x` or `y` vanishes. Every operator in this library is tested this way.
-- `operator_norm(A, x0, n_iter=50)` estimates `‖A‖₂` by power iteration on `AᴴA`; `x0` fixes the shape, dtype and device. The estimate approaches `‖A‖₂` from below, so a step size `1/‖A‖²` taken from it deserves a margin.
-- `to_matrix(A, in_shape=None, dtype=torch.complex64)` materialises the dense matrix for small problems (`to_matrix(A.H) == to_matrix(A).conj().T`).
+- `operator_norm(A, x0, n_iter=50)` estimates `‖A‖₂` by power iteration on `AᴴA`; `x0` fixes the shape, dtype and device. The estimate approaches `‖A‖₂` from below up to round-off (in single precision it can end slightly above), so a step size `1/‖A‖²` taken from it deserves a margin.
+- `to_matrix(A, in_shape=None, dtype=torch.complex64, device=None)` materialises the dense matrix for small problems. `device` is where the basis vectors are created: give it when the operator holds tensors that are not on the default device. For a complex-linear `A`, `to_matrix(A.H) == to_matrix(A).conj().T`; `LinOpReal` and `LinOpImag` are linear over the reals only and have no complex matrix.
 
 ## Conventions worth knowing
 
@@ -127,6 +129,7 @@ Or wrap two functions: `LinOpFunction(apply, applyT, in_shape, out_shape)`. Decl
 - `LinOpMul` declares `in_shape = out_shape = c.shape`, unless `c` is a scalar or has a size-1 axis: it then broadcasts, the shape it acts on is not determined by `c`, and it declares none.
 - An operator built from a tensor (`LinOpMul`, `LinOpConv`, `LinOpMatrix`) lives on that tensor's device and torch raises on an input that is somewhere else, so build it where you will use it; there is no `.to()` to move one afterwards. `LinOpPatch` is the exception: its index tables follow the input's device.
 - Output dtype equals input dtype as long as the operator's own tensor has the input's precision. `LinOpMul`, `LinOpConv` and `LinOpMatrix` promote the two dtypes the way the corresponding product does, so a float64 kernel on a float32 input gives float64, and a real matrix on a complex input gives complex.
+- Outputs may be views of the input: `LinOpIdentity` returns its argument, the central `LinOpCrop`, `LinOpDownsample`, `LinOpReal` and `LinOpImag` return views of it and the adjoint of `LinOpSumReduce` an expanded view, so clone a result before modifying it in place.
 - `LinOpRoll` shifts given as tensors are rounded to the nearest integer (ties to even) and read with `int()`, so operators can be built inside `torch.func` transforms.
 - `LinOpCat` splits its adjoint input according to the sub-operators' `out_shape`. A sub-operator that declares none must preserve shape, and the columns left over by the declared ones are shared equally among those; a shape-changing sub-operator without a declared `out_shape` is refused rather than guessed.
 - `LinOpPatch` is defined by `patch_by_crop_and_roll`, the same window as a `LinOpCrop @ LinOpRoll` composition. The definition is written first in the source and the tests hold the fast version to it, bit for bit.
@@ -152,7 +155,7 @@ pip install -e ".[test]" && pip install minimal-zoom-fft   # or pip install -e .
 pytest                     # add ".[notebooks]" to run the tutorials as tests too
 ```
 
-Every adjoint in the catalogue is checked with the dot-product test and against the dense matrix, `LinOpConv` against a brute-force double sum, `LinOpPatch` against its definition, and the README's Python blocks are executed as a test.
+Every adjoint in the catalogue is checked with the dot-product test, and those of the complex-linear operators (all but `LinOpReal` and `LinOpImag`) against the dense matrix as well. `LinOpConv` is checked against a brute-force double sum, `LinOpPatch` against its definition, and the README's Python blocks are executed as a test.
 
 ## License
 
@@ -162,7 +165,7 @@ MIT
 
 - Purpose: linear operators with exact adjoints, and the algebra to compose them, in PyTorch.
 - Dependencies: `torch`. Optional: `minimal-zoom-fft` for `LinOpZoomFft`.
-- Size: about 1000 lines of implementation in 7 modules, 29 public names (the base class, 24 operators, the patch definition and 3 helpers); about 1100 lines of tests; 3 tutorial notebooks.
+- Size: about 1100 lines of implementation in 7 modules, 29 public names (the base class, 24 operators, the patch definition and 3 helpers); about 1350 lines of tests; 3 tutorial notebooks.
 - Origin: the `ciel` computational-imaging library, EPFL.
 - Provenance: written with Claude (Anthropic) from a brief; read and checked in full by Jonathan Dong.
 - Version: 0.1.0, MIT.

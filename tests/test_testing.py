@@ -72,6 +72,22 @@ class TestAdjointError:
         e = adjoint_error(Zero(), torch.ones(8), torch.ones(8))
         assert 0.1 < e <= 1.0 + 1e-6              # bounded by Cauchy-Schwarz
 
+    def test_wrong_adjoint_with_a_random_y_scales_like_one_over_sqrt_n(self):
+        """With y drawn at random, a wrong adjoint gives about its relative
+        defect over sqrt(n): far above round-off, and far below one on a large
+        problem.  Here a conjugate forgotten on a unit-modulus mask (a defect
+        of order one), for n = 16 and n = 65536."""
+        def median_error(n):
+            p = torch.exp(1j * torch.randn(n, dtype=torch.float64))
+            wrong = LinOpFunction(lambda x: p * x, lambda y: p * y)      # conj(p) forgotten
+            errors = sorted(adjoint_error(wrong, torch.randn(n, dtype=C128)) for _ in range(21))
+            return errors[10]
+
+        small, large = median_error(16), median_error(65536)
+        assert 0.03 < small < 0.6
+        assert 1e-4 < large < 0.02               # 1 / sqrt(65536) is 4e-3; an exact pair gives 1e-16
+        assert large < small / 10
+
     def test_runs_without_recording_a_graph(self):
         """The check is not differentiated: a tensor that requires grad, or an
         operator with learnable coefficients, is compared under no_grad."""
@@ -158,6 +174,22 @@ class TestToMatrix:
         with pytest.raises(ValueError, match="in_shape"):
             to_matrix(LinOpFft())
 
+    def test_real_linear_operators_have_no_complex_matrix(self):
+        """LinOpReal and LinOpImag are linear over the reals only.  The matrix
+        built on the basis vectors e_k does not see what they do to i e_k (for
+        LinOpImag it is zero), so M(A^H) = M(A)^H is a statement about
+        complex-linear operators."""
+        M = to_matrix(LinOpImag(), in_shape=3, dtype=C128)
+        assert torch.equal(M, torch.zeros(3, 3, dtype=torch.float64))
+        assert torch.equal(to_matrix(LinOpImag().H, in_shape=3, dtype=C128), 1j * torch.eye(3, dtype=C128))
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+    def test_device_is_where_the_basis_is_built(self):
+        c = torch.randn(4, dtype=C64)
+        M = to_matrix(LinOpMul(c.to("mps")), device="mps")
+        assert M.device.type == "mps" and torch.allclose(M.cpu(), torch.diag(c))
+        assert to_matrix(LinOpMul(c), device="cpu").device.type == "cpu"
+
 
 # --- every operator of the catalogue, checked with the dot-product test -----
 
@@ -211,6 +243,22 @@ CATALOGUE = _catalogue()
 @pytest.mark.parametrize("name,op,x,y", CATALOGUE, ids=[c[0] for c in CATALOGUE])
 def test_every_operator_passes_the_dot_product_test(name, op, x, y):
     assert adjoint_error(op, x, y) < 1e-12
+
+
+# LinOpReal and LinOpImag map complex to real: linear over the reals only,
+# they have no complex matrix (TestToMatrix) and keep to the dot-product test.
+COMPLEX_LINEAR = [c for c in CATALOGUE if c[0] not in ("LinOpReal", "LinOpImag")]
+
+
+@pytest.mark.parametrize("name,op,x,y", COMPLEX_LINEAR, ids=[c[0] for c in COMPLEX_LINEAR])
+def test_every_adjoint_is_the_conjugate_transpose_of_the_dense_matrix(name, op, x, y):
+    """``to_matrix(A.H) == to_matrix(A).conj().T``: the matrix of the adjoint,
+    built from ``applyT`` alone, against that of the operator, built from
+    ``apply`` alone."""
+    M = to_matrix(op, in_shape=x.shape[1:], dtype=C128)
+    MH = to_matrix(op.H, in_shape=y.shape[1:], dtype=C128)
+    assert MH.shape == M.T.shape
+    assert (MH - M.conj().T).abs().max() < 1e-12
 
 
 @pytest.mark.parametrize("name,op,x,y", CATALOGUE, ids=[c[0] for c in CATALOGUE])

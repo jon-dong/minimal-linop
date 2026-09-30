@@ -49,10 +49,12 @@ def operator_norm(op, x0, n_iter=50):
     ``x0`` fixes the shape, dtype and device of the iterate; ``n_iter``
     products ``A^H A x`` are formed and the largest singular value is the
     square root of the limiting Rayleigh quotient.  The estimate approaches
-    ``||A||_2`` **from below** (it is exact only in the limit, and slower the
+    ``||A||_2`` from below (it is exact only in the limit, and slower the
     closer the two largest singular values are), so a gradient step ``1 /
-    ||A||^2`` derived from it should keep a small margin.  Returns 0.0 for the
-    zero operator.  Runs under ``torch.no_grad()``, like ``adjoint_error``.
+    ||A||^2`` derived from it should keep a small margin.  "From below" holds
+    up to the round-off of the norms: in single precision the estimate can
+    end slightly above.  Returns 0.0 for the zero operator.  Runs under
+    ``torch.no_grad()``, like ``adjoint_error``.
     """
     n_iter = as_index(n_iter, "n_iter")
     if n_iter < 1:
@@ -74,7 +76,12 @@ def to_matrix(op, in_shape=None, dtype=torch.complex64, device=None):
     """The dense matrix of ``op``, column ``i`` being ``op`` applied to the
     ``i``-th basis vector of ``in_shape`` (default ``op.in_shape``), flattened
     in row-major order.  Uses one batched call, so ``op`` must be
-    batch-transparent.  For inspection, debugging and small problems."""
+    batch-transparent.  For inspection, debugging and small problems.
+
+    The basis vectors are created with ``dtype`` on ``device`` (the default
+    device when None): name the device of the operator's own tensors when
+    they live elsewhere.  The matrix describes a complex-linear operator;
+    ``LinOpReal`` and ``LinOpImag``, linear over the reals only, have none."""
     shape = op.in_shape if in_shape is None else in_shape
     if shape is None:
         raise ValueError(f"{type(op).__name__} declares no in_shape; pass in_shape=...")

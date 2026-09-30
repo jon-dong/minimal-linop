@@ -123,6 +123,10 @@ class TestMatrix:
         B = LinOpMatrix(torch.randn(3, 4))
         assert B.apply(torch.randn(4, dtype=C128)).dtype == C128
         assert B.apply(torch.randn(4)).dtype == torch.float32
+        # The output has the input's dtype when M has at most its precision
+        # and is real unless the input is complex.
+        assert B.apply(torch.randn(4, dtype=torch.float64)).dtype == torch.float64
+        assert LinOpMatrix(torch.randn(3, 4, dtype=C64)).apply(torch.randn(4, dtype=torch.float64)).dtype == C128
 
 
 class TestFunction:

@@ -1,5 +1,6 @@
 """adjoint_error, operator_norm, to_matrix and the public export list."""
 import math
+import warnings
 
 import pytest
 import torch
@@ -24,19 +25,20 @@ class WrongAdjoint(LinOp):
         return 3.0 * y
 
 
-class GradSpy(LinOp):
-    """2 I, noting at each call whether autograd is recording."""
+class AdjointByAutograd(LinOp):
+    """A matrix product on the last axis whose adjoint is left to autograd:
+    the vector-Jacobian product of ``apply``."""
 
-    def __init__(self):
-        self.recording = []
+    def __init__(self, matrix):
+        self.matrix = matrix
 
     def apply(self, x):
-        self.recording.append(torch.is_grad_enabled())
-        return 2.0 * x
+        return x @ self.matrix.T
 
     def applyT(self, y):
-        self.recording.append(torch.is_grad_enabled())
-        return 2.0 * y
+        x = torch.zeros(*y.shape[:-1], self.matrix.shape[1], dtype=y.dtype, requires_grad=True)
+        (grad,) = torch.autograd.grad(self.apply(x), x, grad_outputs=y)
+        return grad
 
 
 class TestAdjointError:
@@ -88,15 +90,6 @@ class TestAdjointError:
         assert 1e-4 < large < 0.02               # 1 / sqrt(65536) is 4e-3; an exact pair gives 1e-16
         assert large < small / 10
 
-    def test_runs_without_recording_a_graph(self):
-        """The check is not differentiated: a tensor that requires grad, or an
-        operator with learnable coefficients, is compared under no_grad."""
-        spy, x = GradSpy(), torch.randn(8, requires_grad=True)
-        assert adjoint_error(spy, x) < 1e-6
-        assert spy.recording == [False, False] and torch.is_grad_enabled()
-        probe = torch.randn(8, dtype=C64, requires_grad=True)
-        assert adjoint_error(LinOpMul(probe), torch.randn(8, dtype=C64)) < 1e-5
-
 
 class TestOperatorNorm:
     """The power-iteration estimate against the singular values of the dense
@@ -144,10 +137,47 @@ class TestOperatorNorm:
         with pytest.raises(ValueError, match="x0"):
             operator_norm(LinOpIdentity(), torch.zeros(4))
 
-    def test_runs_without_recording_a_graph(self):
-        spy, x0 = GradSpy(), torch.randn(8, requires_grad=True)
-        assert operator_norm(spy, x0, n_iter=3) == pytest.approx(2.0, rel=1e-6)
-        assert spy.recording == [False] * 6 and torch.is_grad_enabled()
+
+class TestChecksAndAutograd:
+    """The two checks apply the operator in the caller's grad mode; only their
+    own inner products and norms stay out of autograd."""
+
+    def test_no_warning_when_x_requires_grad(self):
+        """torch warns when a tensor that requires grad is turned into a Python
+        number.  The checks take their scalars from detached tensors, so an
+        input that requires grad, or an operator with learnable coefficients,
+        does not trigger it."""
+        x = torch.randn(8, dtype=C64, requires_grad=True)
+        learnable = LinOpMul(torch.randn(8, dtype=C64, requires_grad=True))
+        always = torch.is_warn_always_enabled()
+        torch.set_warn_always(True)               # torch would otherwise say it once per process
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                assert adjoint_error(LinOpFft(), x) < 1e-5
+                assert adjoint_error(learnable, x.detach()) < 1e-5
+                assert operator_norm(LinOpFft(), x, n_iter=3) == pytest.approx(1.0, rel=1e-5)
+                assert operator_norm(learnable, x, n_iter=3) > 0.0
+        finally:
+            torch.set_warn_always(always)
+        assert not [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
+
+    def test_an_adjoint_written_with_autograd_is_checked_like_any_other(self):
+        """``applyT`` as the vector-Jacobian product of ``apply``, taken with
+        ``torch.autograd.grad``, is an exact adjoint; checking it needs the
+        operator to run with autograd recording, as the caller has it."""
+        M = torch.tensor([[2.0, 0.0, 1.0, 0.0],
+                          [0.0, 1.0, 0.0, 0.0],
+                          [1.0, 0.0, 3.0, 0.0],
+                          [0.0, 0.0, 0.0, 1.0],
+                          [0.0, 1.0, 0.0, 2.0]], dtype=torch.float64)
+        A = AdjointByAutograd(M)
+        x, y = torch.randn(3, 4, dtype=torch.float64), torch.randn(3, 5, dtype=torch.float64)
+        assert (A.applyT(y) - y @ M).abs().max() < 1e-12
+        assert adjoint_error(A, x, y) < 1e-12
+        assert adjoint_error(A, x.clone().requires_grad_(True)) < 1e-12
+        exact = float(torch.linalg.matrix_norm(M, 2))
+        assert operator_norm(A, torch.randn(4, dtype=torch.float64), n_iter=100) == pytest.approx(exact, rel=1e-10)
 
 
 class TestToMatrix:

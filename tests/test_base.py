@@ -5,11 +5,11 @@ import torch
 from minimal_linop import (
     LinOp, LinOpComposition, LinOpSum, LinOpScalarMul, LinOpAdjoint,
     LinOpMatrix, LinOpFft, LinOpIdentity, LinOpGrad, LinOpCrop, LinOpMul,
-    adjoint_error,
+    LinOpReal, LinOpImag, adjoint_error, to_matrix,
 )
 
 torch.manual_seed(0)
-C64 = torch.complex64
+C64, C128 = torch.complex64, torch.complex128
 
 
 def cmat(m, n):
@@ -170,6 +170,34 @@ class TestScalarMul:
         A = cmat(4, 4) * torch.tensor(1.0 - 2.0j)
         x, y = torch.randn(4, dtype=C64), torch.randn(4, dtype=C64)
         assert adjoint_error(A, x, y) < 1e-5
+
+    @pytest.mark.parametrize("c", [1j, 2.0 + 1j, -1.5, torch.tensor(0.5 - 2.0j, dtype=C128)])
+    def test_scalar_times_a_real_linear_operator(self, c):
+        """(c A)^H y = A^H (conj(c) y).  That is conj(c) A^H y only when A^H is
+        complex-linear, which the adjoints of LinOpReal and LinOpImag are not."""
+        x, y = torch.randn(3, 8, dtype=C128), torch.randn(3, 8, dtype=C128)
+        F = LinOpFft()
+        for A in (LinOpReal(), LinOpImag(), LinOpReal() @ F, F @ LinOpImag().H @ LinOpReal()):
+            assert adjoint_error(c * A, x, y) < 1e-12
+            assert adjoint_error(A * c, x, y) < 1e-12
+        # A real domain: the adjoint of x -> c x, x real, is y -> Re(conj(c) y).
+        x_real = torch.randn(3, 8, dtype=torch.float64)
+        assert adjoint_error(c * LinOpReal().H, x_real, y) < 1e-12
+        cbar = complex(c).conjugate()
+        assert torch.allclose((c * LinOpReal()).applyT(y), (cbar * y).real.to(C128), atol=1e-12)
+        assert torch.allclose((c * LinOpReal().H).applyT(y), (cbar * y).real, atol=1e-12)
+
+    @pytest.mark.parametrize("c", [1j, 2.0 + 1j, -1.5, torch.tensor(0.5 - 2.0j, dtype=C128)])
+    def test_scalar_times_a_complex_linear_operator(self, c):
+        """There the adjoint is conj(c) A^H, on the dense matrices as well."""
+        M = torch.randn(3, 4, dtype=C128)
+        A = LinOpMatrix(M)
+        x, y = torch.randn(2, 4, dtype=C128), torch.randn(2, 3, dtype=C128)
+        cbar = complex(c).conjugate()
+        assert adjoint_error(c * A, x, y) < 1e-12
+        assert torch.allclose((c * A).applyT(y), cbar * A.applyT(y), atol=1e-12)
+        assert torch.allclose(to_matrix((c * A).H, dtype=C128), cbar * M.conj().T, atol=1e-12)
+        assert adjoint_error(c * (LinOpFft() @ A), x, y) < 1e-12
 
 
 class TestErrors:

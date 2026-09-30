@@ -136,7 +136,13 @@ class LinOpSum(LinOp):
 
 
 class LinOpScalarMul(LinOp):
-    """``(c A)(x) = c A(x)``; adjoint ``conj(c) A^H``."""
+    """``(c A)(x) = c A(x)``; adjoint ``y -> A^H(conj(c) y)``.
+
+    That is ``conj(c) A^H y`` whenever ``A^H`` is complex-linear.  The scalar
+    goes in before ``A^H`` so that the adjoint is also right for the operators
+    that are only real-linear (``LinOpReal``, ``LinOpImag`` and what is built
+    on them), where the two differ for a complex ``c``.
+    """
 
     def __init__(self, A: LinOp, scalar):
         self.A, self.scalar = A, scalar
@@ -149,7 +155,7 @@ class LinOpScalarMul(LinOp):
     def applyT(self, y):
         c = self.scalar
         c = c.conj() if isinstance(c, torch.Tensor) else c.conjugate()
-        return self.A.applyT(y) * c
+        return self.A.applyT(y * c)
 
 
 class LinOpAdjoint(LinOp):

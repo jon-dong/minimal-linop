@@ -7,9 +7,9 @@ Most of computational imaging is `y = A x` for a linear `A` that is far too larg
 ## Install
 
 ```bash
-pip install minimal-linop                                     # once published
-pip install git+https://github.com/jon-dong/minimal-linop     # from GitHub
+pip install minimal-linop
 pip install "minimal-linop[fft]"                              # adds minimal-zoom-fft for LinOpZoomFft
+pip install git+https://github.com/jon-dong/minimal-linop     # the development version
 ```
 
 Requires Python ≥ 3.10 and PyTorch ≥ 2.0.

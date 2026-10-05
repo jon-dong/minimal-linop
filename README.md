@@ -1,5 +1,7 @@
 # minimal-linop
 
+![Linear operators: input x maps through A to output y = Ax, with adjoint A.H for backpropagation. Matrix-free, composable, batch and GPU support; example: crop, probe, FFT.](docs/assets/overview.png)
+
 Linear operators with exact adjoints in PyTorch, composable with `@`, `+`, `*` and `.H`.
 
 Imaging models are `y = A x` with an `A` too large to store: FFTs, masks, crops, convolutions and their compositions. Reconstruction needs `A` and its adjoint `Aᴴ`, exactly, or the solver drifts. This is a small catalogue of such operators, each with a tested adjoint, and the algebra to combine them into forward models.

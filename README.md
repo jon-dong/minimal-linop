@@ -1,5 +1,3 @@
-# minimal-linop
-
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/overview-dark.png">
   <img alt="Linear operators: input x maps through A to output y = Ax, with adjoint A.H for backpropagation. Matrix-free, composable, batch and GPU support; example: crop, probe, FFT." src="docs/assets/overview.png">

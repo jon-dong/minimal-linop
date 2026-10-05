@@ -1,7 +1,17 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/overview-dark.png">
-  <img alt="Linear operators: input x maps through A to output y = Ax, with adjoint A.H for backpropagation. Matrix-free, composable, batch and GPU support; example: crop, probe, FFT." src="docs/assets/overview.png">
-</picture>
+<p>
+  <a href="docs/assets/overview.webp#gh-light-mode-only">
+    <picture>
+      <source media="(max-width: 600px)" srcset="docs/assets/overview-mobile.webp">
+      <img alt="Linear operators: input x maps through A to output y = Ax, with adjoint A.H for backpropagation. Matrix-free, composable, batch and GPU support; example: crop, probe, FFT." src="docs/assets/overview.webp" width="640">
+    </picture>
+  </a>
+  <a href="docs/assets/overview-dark.webp#gh-dark-mode-only">
+    <picture>
+      <source media="(max-width: 600px)" srcset="docs/assets/overview-mobile-dark.webp">
+      <img alt="Linear operators: input x maps through A to output y = Ax, with adjoint A.H for backpropagation. Matrix-free, composable, batch and GPU support; example: crop, probe, FFT." src="docs/assets/overview-dark.webp" width="640">
+    </picture>
+  </a>
+</p>
 
 Linear operators with exact adjoints in PyTorch, composable with `@`, `+`, `*` and `.H`.
 

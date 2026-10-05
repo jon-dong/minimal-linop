@@ -129,8 +129,8 @@ Same idea as `scipy.sparse.linalg.LinearOperator`, [PyLops](https://pylops.readt
 
 Three notebooks in [`notebooks/`](notebooks/), after `pip install -e ".[notebooks]"`:
 
-1. [Why](notebooks/01_why_linear_operators.ipynb): a forward model by composition, its gradient, and what a sloppy adjoint does to a solver.
-2. [What it computes](notebooks/02_what_it_computes.ipynb): every identity, adjoint and convention above, checked against brute force in float64.
+1. [Tutorial](notebooks/01_tutorial.ipynb): a forward model by composition, its gradient, and what a sloppy adjoint does to a solver.
+2. [Details](notebooks/02_details.ipynb): every identity, adjoint and convention above, checked against brute force in float64.
 3. [Benchmark](notebooks/03_benchmark.ipynb): overhead against hand-written torch, batching, precision, when not to use it.
 
 ## Tests
@@ -141,6 +141,12 @@ pytest
 ```
 
 Every adjoint is checked with the dot-product test and, for the complex-linear operators, against the dense matrix; `LinOpConv` against a double sum, `LinOpPatch` against its definition. The README's Python blocks run as a test.
+
+## Authors
+
+- [Jonathan Dong](https://github.com/jon-dong) (EPFL)
+
+## Reviewers
 
 ## License
 
